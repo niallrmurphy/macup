@@ -9,15 +9,16 @@ import (
 // Entry is a normalized inventory item. An app installed through a cask has
 // both discovery sources but only one row. Raw provider records are retained.
 type Entry struct {
-	Name      string   `json:"name"`
-	Installed string   `json:"installed,omitempty"`
-	Available string   `json:"available,omitempty"`
-	Status    string   `json:"status"`
-	Sources   []string `json:"sources"`
-	Path      string   `json:"path,omitempty"`
-	BundleID  string   `json:"bundle_id,omitempty"`
-	Package   string   `json:"package,omitempty"`
-	Detail    string   `json:"detail,omitempty"`
+	Name         string   `json:"name"`
+	Installed    string   `json:"installed,omitempty"`
+	Available    string   `json:"available,omitempty"`
+	Status       string   `json:"status"`
+	UpdateSource string   `json:"update_source,omitempty"`
+	Sources      []string `json:"sources"`
+	Path         string   `json:"path,omitempty"`
+	BundleID     string   `json:"bundle_id,omitempty"`
+	Package      string   `json:"package,omitempty"`
+	Detail       string   `json:"detail,omitempty"`
 }
 
 // Reconcile merges cask records only if their recorded app target uniquely
@@ -51,13 +52,16 @@ func Reconcile(r *Result) {
 					e.Sources = append(e.Sources, source)
 					e.Package = p.Name
 					e.Status = status
+					if p.Outdated {
+						e.UpdateSource = "homebrew"
+					}
 					e.Available = p.Current
 					// Bundle version is the observed app version, which may differ
 					// from Homebrew's cask version; keep it as installed.
 					continue
 				}
 			}
-			entries = append(entries, Entry{Name: p.Name, Installed: p.Installed, Available: p.Current, Status: status, Sources: []string{source}, Package: p.Name})
+			entries = append(entries, Entry{Name: p.Name, Installed: p.Installed, Available: p.Current, Status: status, Sources: []string{source}, Package: p.Name, UpdateSource: updateSource(p.Outdated, "homebrew")})
 		}
 	}
 	if r.AppStore != nil {
@@ -87,12 +91,15 @@ func Reconcile(r *Result) {
 				if len(e.Sources) == 1 {
 					e.Sources = append(e.Sources, "appstore")
 					e.Status = status
+					if p.Outdated {
+						e.UpdateSource = "appstore"
+					}
 					e.Available = p.AvailableVersion
 					e.Detail = "id:" + p.ID
 					continue
 				}
 			}
-			entries = append(entries, Entry{Name: p.Name, Installed: p.Installed, Available: p.AvailableVersion, Status: status, Sources: []string{"appstore"}, Detail: "id:" + p.ID})
+			entries = append(entries, Entry{Name: p.Name, Installed: p.Installed, Available: p.AvailableVersion, Status: status, Sources: []string{"appstore"}, Detail: "id:" + p.ID, UpdateSource: updateSource(p.Outdated, "appstore")})
 		}
 	}
 	sort.Slice(entries, func(i, j int) bool {
@@ -109,4 +116,11 @@ func identityPath(s string) string {
 	// Clean paths; avoid resolving symlinks because the inventory scanner
 	// deliberately ignores them and the destination is only expected metadata.
 	return filepath.Clean(s)
+}
+
+func updateSource(outdated bool, source string) string {
+	if outdated {
+		return source
+	}
+	return ""
 }

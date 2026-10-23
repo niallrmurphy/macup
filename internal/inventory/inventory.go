@@ -33,6 +33,7 @@ type Result struct {
 	Homebrew     *HomebrewResult `json:"homebrew,omitempty"`
 	AppStore     *AppStoreResult `json:"appstore,omitempty"`
 	Entries      []Entry         `json:"entries,omitempty"`
+	Sparkle      *SparkleResult  `json:"sparkle,omitempty"`
 }
 
 // DefaultRoots covers common system-wide and per-user app locations.

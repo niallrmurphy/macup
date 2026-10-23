@@ -17,7 +17,7 @@ func JSON(w io.Writer, r inventory.Result) error {
 	return enc.Encode(r)
 }
 
-type row struct{ source, name, installed, available, status, detail string }
+type row struct{ source, name, installed, available, status, updateSource, detail string }
 
 // Table presents all requested inventory sources in a single sortable view.
 func Table(w io.Writer, r inventory.Result) error {
@@ -33,7 +33,7 @@ func Table(w io.Writer, r inventory.Result) error {
 		if e.Package != "" && e.Path != "" {
 			detail += " (cask:" + e.Package + ")"
 		}
-		rows = append(rows, row{strings.Join(e.Sources, "+"), e.Name, e.Installed, e.Available, e.Status, detail})
+		rows = append(rows, row{strings.Join(e.Sources, "+"), e.Name, e.Installed, e.Available, e.Status, e.UpdateSource, detail})
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if strings.ToLower(rows[i].name) != strings.ToLower(rows[j].name) {
@@ -42,11 +42,11 @@ func Table(w io.Writer, r inventory.Result) error {
 		return rows[i].source < rows[j].source
 	})
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "SOURCE\tNAME\tINSTALLED\tAVAILABLE\tSTATUS\tDETAIL"); err != nil {
+	if _, err := fmt.Fprintln(tw, "SOURCE\tNAME\tINSTALLED\tAVAILABLE\tSTATUS\tUPDATE SOURCE\tDETAIL"); err != nil {
 		return err
 	}
 	for _, x := range rows {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", x.source, x.name, nonempty(x.installed), nonempty(x.available), x.status, nonempty(x.detail)); err != nil {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", x.source, x.name, nonempty(x.installed), nonempty(x.available), x.status, nonempty(x.updateSource), nonempty(x.detail)); err != nil {
 			return err
 		}
 	}

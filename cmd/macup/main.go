@@ -9,6 +9,7 @@ import (
 	"github.com/niallrmurphy/macup/internal/output"
 	"os"
 	"strings"
+	"time"
 )
 
 func main() { os.Exit(run(os.Args[1:])) }
@@ -23,6 +24,10 @@ func run(args []string) int {
 		jsonOut := fs.Bool("json", false, "print machine-readable JSON")
 		appsFlag := fs.Bool("apps", false, "scan installed macOS .app bundles")
 		brewFlag := fs.Bool("brew", false, "scan installed Homebrew formulae and casks")
+		sparkleFlag := fs.Bool("sparkle", false, "check discovered apps with Sparkle appcasts (network access)")
+		quietFlag := fs.Bool("quiet", false, "suppress scan progress messages on stderr")
+		debugFlag := fs.Bool("sparkle-debug", false, "print Sparkle per-feed diagnostics to stderr (implies --sparkle)")
+		debugXMLDir := fs.String("sparkle-debug-xml", "", "directory for sanitized appcast XML structure samples (implies --sparkle-debug)")
 		appStoreFlag := fs.Bool("appstore", false, "scan Mac App Store software via mas")
 		rootsFlag := fs.String("roots", "", "comma-separated directories to scan (defaults to standard macOS app directories)")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -35,8 +40,8 @@ func run(args []string) int {
 		// An explicit source flag selects only named providers. Without source
 		// flags, scan all sources. Custom roots imply --apps to avoid running
 		// unrelated package managers when querying a specific directory.
-		explicit := *appsFlag || *brewFlag || *appStoreFlag || strings.TrimSpace(*rootsFlag) != ""
-		useApps := !explicit || *appsFlag || strings.TrimSpace(*rootsFlag) != ""
+		explicit := *appsFlag || *brewFlag || *appStoreFlag || *sparkleFlag || *debugFlag || *debugXMLDir != "" || strings.TrimSpace(*rootsFlag) != ""
+		useApps := !explicit || *appsFlag || *sparkleFlag || *debugFlag || *debugXMLDir != "" || strings.TrimSpace(*rootsFlag) != ""
 		useBrew := !explicit || *brewFlag
 		useAppStore := !explicit || *appStoreFlag
 		result := inventory.Result{Applications: []inventory.Application{}, Warnings: []inventory.Warning{}, Roots: []string{}}
@@ -55,6 +60,58 @@ func run(args []string) int {
 			}
 		}
 		inventory.Reconcile(&result)
+		if (*sparkleFlag || *debugFlag || *debugXMLDir != "") && useApps {
+			var progress inventory.SparkleProgressFunc
+			if !*quietFlag || *debugFlag || *debugXMLDir != "" {
+				fmt.Fprintf(os.Stderr, "Sparkle: examining %d applications for update feeds\n", len(result.Applications))
+				progress = func(e inventory.SparkleProgress) {
+					switch e.Phase {
+					case "start":
+						fmt.Fprintf(os.Stderr, "Sparkle [%d/%d] %s: checking feed...\n", e.Index, e.Total, e.Name)
+					case "done", "skip":
+						detail := e.Status
+						if e.Reason != "" {
+							detail += " (" + e.Reason + ")"
+						}
+						if e.Phase == "skip" {
+							fmt.Fprintf(os.Stderr, "Sparkle [%d/%d] %s: %s (skipped before fetch)\n", e.Index, e.Total, e.Name, detail)
+						} else {
+							fmt.Fprintf(os.Stderr, "Sparkle [%d/%d] %s: %s (%s)\n", e.Index, e.Total, e.Name, detail, e.Duration.Round(time.Millisecond))
+						}
+						if *debugFlag || *debugXMLDir != "" {
+							printSparkleDiagnostics(os.Stderr, e.Check)
+						}
+					}
+				}
+			}
+			var s inventory.SparkleResult
+			if *debugXMLDir != "" {
+				s = inventory.CheckSparkleWithXMLSamples(context.Background(), result.Applications, nil, progress, *debugXMLDir)
+			} else if *debugFlag {
+				s = inventory.CheckSparkleWithDiagnostics(context.Background(), result.Applications, nil, progress)
+			} else {
+				s = inventory.CheckSparkleWithProgress(context.Background(), result.Applications, nil, progress)
+			}
+			result.Sparkle = &s
+			inventory.ApplySparkle(&result)
+			if !*quietFlag || *debugFlag || *debugXMLDir != "" {
+				var outdated, notFlagged, unchecked int
+				for _, c := range s.Checks {
+					switch c.Status {
+					case "OUTDATED":
+						outdated++
+					case "NOT FLAGGED":
+						notFlagged++
+					default:
+						unchecked++
+					}
+				}
+				fmt.Fprintf(os.Stderr, "Sparkle: %d feeds found; %d outdated, %d not flagged, %d unchecked\n", len(s.Checks), outdated, notFlagged, unchecked)
+				if *debugFlag {
+					fmt.Fprintln(os.Stderr, "Sparkle: every discovered feed is included above, including pre-fetch skips")
+				}
+			}
+		}
 		var err error
 		if *jsonOut {
 			err = output.JSON(os.Stdout, result)
@@ -89,6 +146,22 @@ func run(args []string) int {
 		return 2
 	}
 }
+func printSparkleDiagnostics(w *os.File, c inventory.SparkleCheck) {
+	fmt.Fprintf(w, "  Feed: %s\n  Installed build: %s\n", c.FeedURL, c.InstalledBuild)
+	if c.Diagnostics == nil {
+		return
+	}
+	d := c.Diagnostics
+	fmt.Fprintf(w, "  Version fields: item=%d enclosure=%d; display fields: item=%d enclosure=%d; enclosure URLs=%d\n", d.ItemVersions, d.EnclosureVersions, d.ItemShortVersions, d.EnclosureShortVersions, d.EnclosureURLs)
+	if d.XMLSample != "" {
+		fmt.Fprintf(w, "  XML structure: %s\n", d.XMLSample)
+	}
+	fmt.Fprintf(w, "  Items: %d; comparable: %d; skipped channel: %d; delta: %d; incompatible OS: %d; unknown OS: %d; minimumUpdateVersion: %d; missing version: %d; incomparable: %d\n", d.TotalItems, d.Comparable, d.SkippedChannel, d.SkippedDelta, d.SkippedOS, d.UnknownOS, d.SkippedMinimumUpdate, d.MissingVersion, d.UncomparableVersion)
+	if c.AvailableBuild != "" {
+		fmt.Fprintf(w, "  Available build: %s (display: %s)\n", c.AvailableBuild, c.AvailableVersion)
+	}
+}
+
 func selectedRoots(s string) []string {
 	if strings.TrimSpace(s) == "" {
 		return inventory.DefaultRoots()
@@ -105,11 +178,15 @@ func usage() {
 	fmt.Println(`macup — read-only macOS software inventory
 
 Usage:
-  macup scan [--json] [--apps] [--brew] [--appstore] [--roots /Applications,/Users/me/Applications]
+  macup scan [--json] [--apps] [--brew] [--appstore] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--quiet] [--roots /Applications,/Users/me/Applications]
   macup doctor [--roots /Applications]
   macup help
 
 With no source flags, all three inventory sources are scanned.
 Source flags select only the named sources; --roots implies --apps.
+--sparkle enables opt-in HTTPS appcast checks for discovered apps.
+--sparkle-debug implies --sparkle and explains release filtering on stderr.
+--sparkle-debug-xml DIR also saves structural XML samples (without values) to DIR.
+--quiet suppresses routine progress on stderr (debug output remains enabled).
 No applications are updated or modified.`)
 }
