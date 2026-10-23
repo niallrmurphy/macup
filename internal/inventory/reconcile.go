@@ -61,10 +61,36 @@ func Reconcile(r *Result) {
 		}
 	}
 	if r.AppStore != nil {
+		// A receipt and a Spotlight-reported Adam ID must agree with mas.
+		// Never merge on display name or bundle identifier alone.
+		appIDs := make(map[string][]int)
+		for i := range entries {
+			if len(entries[i].Sources) == 1 && entries[i].Sources[0] == "apps" {
+				for _, a := range r.Applications {
+					if identityPath(a.Path) == identityPath(entries[i].Path) && a.AppStoreID != "" {
+						appIDs[a.AppStoreID] = append(appIDs[a.AppStoreID], i)
+					}
+				}
+			}
+		}
+		masCounts := map[string]int{}
+		for _, p := range r.AppStore.Packages {
+			masCounts[p.ID]++
+		}
 		for _, p := range r.AppStore.Packages {
 			status := "NOT FLAGGED"
 			if p.Outdated {
 				status = "OUTDATED"
+			}
+			if matches := appIDs[p.ID]; masCounts[p.ID] == 1 && len(matches) == 1 {
+				e := &entries[matches[0]]
+				if len(e.Sources) == 1 {
+					e.Sources = append(e.Sources, "appstore")
+					e.Status = status
+					e.Available = p.AvailableVersion
+					e.Detail = "id:" + p.ID
+					continue
+				}
 			}
 			entries = append(entries, Entry{Name: p.Name, Installed: p.Installed, Available: p.AvailableVersion, Status: status, Sources: []string{"appstore"}, Detail: "id:" + p.ID})
 		}

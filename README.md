@@ -92,3 +92,13 @@ discovered `.app` paths. An unambiguous exact path becomes one table row
 retains the original provider sections. Multi-app casks and ambiguous matches
 remain separate to avoid false attribution. Cask artifact targets are recorded
 install destinations, not a fresh filesystem check.
+
+### App Store identity reconciliation
+
+When `--apps` and `--appstore` are enabled, `macup` checks for a regular
+`Contents/_MASReceipt/receipt` file and queries Spotlight's
+`kMDItemAppStoreAdamID` using macOS `mdls`. An application and a `mas list`
+entry merge only when their numeric App Store IDs match uniquely. Entries
+with missing Spotlight metadata, duplicate IDs, or conflicting Homebrew
+ownership remain separate. This heuristic does **not** cryptographically
+validate App Store receipts. It runs read-only and only when `mas` is present.

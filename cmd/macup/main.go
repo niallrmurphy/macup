@@ -50,6 +50,9 @@ func run(args []string) int {
 		if useAppStore {
 			a := inventory.ScanAppStore(context.Background())
 			result.AppStore = &a
+			if useApps && a.Available {
+				inventory.AnnotateAppStoreIDs(context.Background(), &result)
+			}
 		}
 		inventory.Reconcile(&result)
 		var err error

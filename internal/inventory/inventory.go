@@ -13,11 +13,12 @@ import (
 )
 
 type Application struct {
-	Name     string `json:"name"`
-	BundleID string `json:"bundle_id,omitempty"`
-	Version  string `json:"version,omitempty"`
-	Build    string `json:"build,omitempty"`
-	Path     string `json:"path"`
+	Name       string `json:"name"`
+	BundleID   string `json:"bundle_id,omitempty"`
+	AppStoreID string `json:"app_store_id,omitempty"`
+	Version    string `json:"version,omitempty"`
+	Build      string `json:"build,omitempty"`
+	Path       string `json:"path"`
 }
 
 type Warning struct {
