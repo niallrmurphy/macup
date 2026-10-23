@@ -80,6 +80,18 @@ func Table(w io.Writer, r inventory.Result) error {
 			}
 		}
 	}
+	if r.Adobe != nil {
+		if r.Adobe.CheckStatus == "checked" {
+			if _, err := fmt.Fprintf(w, "provider (adobe): checked; %d catalogue releases; %d installed package records\n", len(r.Adobe.Products), len(r.Adobe.Installed)); err != nil {
+				return err
+			}
+		}
+		for _, x := range r.Adobe.Warnings {
+			if _, err := fmt.Fprintf(w, "warning (adobe): %s\n", x); err != nil {
+				return err
+			}
+		}
+	}
 	if r.AppStore != nil {
 		for _, x := range r.AppStore.Warnings {
 			if _, err := fmt.Fprintf(w, "warning (appstore): %s\n", x); err != nil {

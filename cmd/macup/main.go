@@ -30,7 +30,7 @@ func run(args []string) int {
 		debugFlag := fs.Bool("sparkle-debug", false, "print Sparkle per-feed diagnostics to stderr (implies --sparkle)")
 		debugXMLDir := fs.String("sparkle-debug-xml", "", "directory for sanitized appcast XML structure samples (implies --sparkle-debug)")
 		appStoreFlag := fs.Bool("appstore", false, "scan Mac App Store software via mas")
-		providersFlag := fs.String("providers", "all", "update-check providers: all, none, microsoft, sparkle (comma-separated)")
+		providersFlag := fs.String("providers", "all", "update-check providers: all, none, microsoft, sparkle, adobe (comma-separated)")
 		rootsFlag := fs.String("roots", "", "comma-separated directories to scan (defaults to standard macOS app directories)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
@@ -53,6 +53,7 @@ func run(args []string) int {
 		useBrew := !explicitSource || *brewFlag
 		useAppStore := !explicitSource || *appStoreFlag
 		useMicrosoft := providerSet["microsoft"] && useApps
+		useAdobe := providerSet["adobe"] && useApps
 		useSparkle := providerSet["sparkle"] && useApps
 
 		result := inventory.Result{Applications: []inventory.Application{}, Warnings: []inventory.Warning{}, Roots: []string{}}
@@ -78,6 +79,11 @@ func run(args []string) int {
 			m := inventory.ScanMicrosoft(context.Background())
 			result.Microsoft = &m
 			inventory.ApplyMicrosoft(&result)
+		}
+		if useAdobe {
+			a := inventory.ScanAdobe(context.Background())
+			result.Adobe = &a
+			inventory.ApplyAdobe(&result)
 		}
 		if useSparkle {
 			var progress inventory.SparkleProgressFunc
@@ -196,7 +202,7 @@ func usage() {
 	fmt.Println(`macup — read-only macOS software inventory
 
 Usage:
-  macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--quiet] [--roots /Applications,/Users/me/Applications]
+  macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle,adobe] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--quiet] [--roots /Applications,/Users/me/Applications]
   macup doctor [--roots /Applications]
   macup help
 
@@ -219,14 +225,15 @@ func parseProviders(raw string) (map[string]bool, error) {
 		case "all":
 			p["microsoft"] = true
 			p["sparkle"] = true
+			p["adobe"] = true
 		case "none":
 			if len(parts) != 1 {
 				return nil, fmt.Errorf("--providers=none cannot be combined with other providers")
 			}
-		case "microsoft", "sparkle":
+		case "microsoft", "sparkle", "adobe":
 			p[strings.TrimSpace(part)] = true
 		default:
-			return nil, fmt.Errorf("unknown update provider %q (choose all, none, microsoft, sparkle)", part)
+			return nil, fmt.Errorf("unknown update provider %q (choose all, none, microsoft, sparkle, adobe)", part)
 		}
 	}
 	return p, nil

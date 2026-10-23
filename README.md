@@ -206,3 +206,23 @@ macup scan --apps --providers=microsoft,sparkle --json
 Provider failures do not suppress discovered applications. MAU diagnostics now
 include a bounded excerpt of the command output on conversion failure, which
 may contain machine-specific data; inspect logs before sharing.
+
+### Adobe catalogue provider
+
+`macup scan --apps --providers=adobe` checks Adobe's own published product
+catalogue over HTTPS and matches supported applications against Adobe's local
+installed-product inventory (`/Library/Application Support/Adobe/caps/hdpim.db`).
+The provider is on by default and can be disabled with `--providers=none`.
+It requires the `sqlite3` command and Adobe's local inventory to be readable.
+The integration is read-only; no Adobe installer/update helper is executed.
+
+Recognised products are Lightroom Classic (`LTRM`), Photoshop 2023
+(`PHSP`), Adobe Content Synchronizer (`COSY`), and CCXProcess (`CCXP`).
+The latter two are Creative Cloud components, not independent user-facing
+applications. Their package and bundle version formats may differ. A newer **same-major catalogue release** is reported as
+`OUTDATED`; a newer **major-generation release** as `UPGRADE AVAILABLE`.
+These are *published catalogue candidates*, **not** confirmed Creative Cloud
+install offers: eligibility, license, rollout, OS minimum and policy may differ.
+`CURRENT` is deliberately not inferred from a catalogue entry alone. An
+unrecognised schema, missing local product identity or failed fetch cannot be
+used as evidence that an application is up to date.
