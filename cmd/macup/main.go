@@ -51,6 +51,7 @@ func run(args []string) int {
 			a := inventory.ScanAppStore(context.Background())
 			result.AppStore = &a
 		}
+		inventory.Reconcile(&result)
 		var err error
 		if *jsonOut {
 			err = output.JSON(os.Stdout, result)

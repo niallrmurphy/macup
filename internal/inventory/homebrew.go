@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -12,11 +13,12 @@ import (
 
 // BrewPackage describes an installed Homebrew formula or cask.
 type BrewPackage struct {
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	Installed string `json:"installed"`
-	Current   string `json:"current,omitempty"`
-	Outdated  bool   `json:"outdated"`
+	Name      string   `json:"name"`
+	Kind      string   `json:"kind"`
+	Installed string   `json:"installed"`
+	Current   string   `json:"current,omitempty"`
+	Outdated  bool     `json:"outdated"`
+	AppPaths  []string `json:"app_paths,omitempty"`
 }
 
 type HomebrewResult struct {
@@ -96,6 +98,19 @@ func ScanHomebrewWith(ctx context.Context, command BrewCommand) HomebrewResult {
 			}
 		}
 	}
+	// Installed cask artifact destinations are used for exact path reconciliation.
+	// This is descriptive metadata, not confirmation that the path exists.
+	if out, err := command(ctx, "info", "--json=v2", "--installed"); err != nil {
+		r.Warnings = append(r.Warnings, fmt.Sprintf("brew info --json=v2 --installed: %v", err))
+	} else if paths, err := parseInstalledCaskPaths(out); err != nil {
+		r.Warnings = append(r.Warnings, fmt.Sprintf("invalid brew info JSON: %v", err))
+	} else {
+		for name, destinations := range paths {
+			if pkg, ok := all["cask:"+name]; ok {
+				pkg.AppPaths = destinations
+			}
+		}
+	}
 	for _, p := range all {
 		r.Packages = append(r.Packages, *p)
 	}
@@ -124,4 +139,31 @@ func markBrewOutdated(packages map[string]*BrewPackage, kind, name, current stri
 		p.Outdated = true
 		p.Current = current
 	}
+}
+
+// parseInstalledCaskPaths uses app artifact targets from Homebrew's installed
+// cask metadata. Only absolute paths are accepted; names are not guessed.
+func parseInstalledCaskPaths(data []byte) (map[string][]string, error) {
+	var doc struct {
+		Casks []struct {
+			Token     string `json:"token"`
+			Artifacts []struct {
+				App    json.RawMessage `json:"app"`
+				Target string          `json:"target"`
+			} `json:"artifacts"`
+		} `json:"casks"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	paths := make(map[string][]string)
+	for _, c := range doc.Casks {
+		for _, artifact := range c.Artifacts {
+			if len(artifact.App) == 0 || !filepath.IsAbs(artifact.Target) {
+				continue
+			}
+			paths[c.Token] = append(paths[c.Token], filepath.Clean(artifact.Target))
+		}
+	}
+	return paths, nil
 }

@@ -21,27 +21,19 @@ type row struct{ source, name, installed, available, status, detail string }
 
 // Table presents all requested inventory sources in a single sortable view.
 func Table(w io.Writer, r inventory.Result) error {
-	rows := make([]row, 0, len(r.Applications))
-	for _, a := range r.Applications {
-		rows = append(rows, row{"app", a.Name, a.Version, "", "UNCHECKED", a.Path})
+	if r.Entries == nil {
+		inventory.Reconcile(&r)
 	}
-	if r.Homebrew != nil {
-		for _, p := range r.Homebrew.Packages {
-			status := "NOT FLAGGED"
-			if p.Outdated {
-				status = "OUTDATED"
-			}
-			rows = append(rows, row{"brew-" + p.Kind, p.Name, p.Installed, p.Current, status, ""})
+	rows := make([]row, 0, len(r.Entries))
+	for _, e := range r.Entries {
+		detail := e.Path
+		if detail == "" {
+			detail = e.Detail
 		}
-	}
-	if r.AppStore != nil {
-		for _, p := range r.AppStore.Packages {
-			status := "NOT FLAGGED"
-			if p.Outdated {
-				status = "OUTDATED"
-			}
-			rows = append(rows, row{"appstore", p.Name, p.Installed, p.AvailableVersion, status, "id:" + p.ID})
+		if e.Package != "" && e.Path != "" {
+			detail += " (cask:" + e.Package + ")"
 		}
+		rows = append(rows, row{strings.Join(e.Sources, "+"), e.Name, e.Installed, e.Available, e.Status, detail})
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if strings.ToLower(rows[i].name) != strings.ToLower(rows[j].name) {

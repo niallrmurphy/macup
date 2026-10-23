@@ -20,6 +20,8 @@ func TestScanHomebrewWith(t *testing.T) {
 			return []byte("node 24.1.0\n"), nil
 		case "list --cask --versions":
 			return []byte("firefox 140.0\n"), nil
+		case "info --json=v2 --installed":
+			return []byte(`{"casks":[{"token":"firefox","artifacts":[{"app":["Firefox.app"],"target":"/Applications/Firefox.app"}]}]}`), nil
 		case "outdated --json=v2":
 			return []byte(`{"formulae":[{"name":"node","current_version":"24.2.0"}],"casks":[]}`), nil
 		}

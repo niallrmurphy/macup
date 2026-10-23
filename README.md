@@ -82,3 +82,13 @@ The planned `macup outdated` and `macup audit` commands **do not exist yet**.
 ## License
 
 MIT. See `LICENSE`.
+
+### Reconciled inventory
+
+When `--apps` and `--brew` are scanned together, installed cask app artifact
+destinations from `brew info --json=v2 --installed` are matched against
+discovered `.app` paths. An unambiguous exact path becomes one table row
+(`apps+brew-cask`), while JSON includes a normalized `entries` array and
+retains the original provider sections. Multi-app casks and ambiguous matches
+remain separate to avoid false attribution. Cask artifact targets are recorded
+install destinations, not a fresh filesystem check.
