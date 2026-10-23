@@ -23,12 +23,14 @@ func run(args []string) int {
 		fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 		jsonOut := fs.Bool("json", false, "print machine-readable JSON")
 		appsFlag := fs.Bool("apps", false, "scan installed macOS .app bundles")
+		includeSystem := fs.Bool("include-system", false, "include macOS-managed system application bundles")
 		brewFlag := fs.Bool("brew", false, "scan installed Homebrew formulae and casks")
 		sparkleFlag := fs.Bool("sparkle", false, "check discovered apps with Sparkle appcasts (network access)")
 		quietFlag := fs.Bool("quiet", false, "suppress scan progress messages on stderr")
 		debugFlag := fs.Bool("sparkle-debug", false, "print Sparkle per-feed diagnostics to stderr (implies --sparkle)")
 		debugXMLDir := fs.String("sparkle-debug-xml", "", "directory for sanitized appcast XML structure samples (implies --sparkle-debug)")
 		appStoreFlag := fs.Bool("appstore", false, "scan Mac App Store software via mas")
+		providersFlag := fs.String("providers", "all", "update-check providers: all, none, microsoft, sparkle (comma-separated)")
 		rootsFlag := fs.String("roots", "", "comma-separated directories to scan (defaults to standard macOS app directories)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
@@ -37,16 +39,28 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, "unexpected arguments:", fs.Args())
 			return 2
 		}
-		// An explicit source flag selects only named providers. Without source
-		// flags, scan all sources. Custom roots imply --apps to avoid running
-		// unrelated package managers when querying a specific directory.
-		explicit := *appsFlag || *brewFlag || *appStoreFlag || *sparkleFlag || *debugFlag || *debugXMLDir != "" || strings.TrimSpace(*rootsFlag) != ""
-		useApps := !explicit || *appsFlag || *sparkleFlag || *debugFlag || *debugXMLDir != "" || strings.TrimSpace(*rootsFlag) != ""
-		useBrew := !explicit || *brewFlag
-		useAppStore := !explicit || *appStoreFlag
+		// Inventory sources and update-check providers are independent selections.
+		providerSet, err := parseProviders(*providersFlag)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 2
+		}
+		if *sparkleFlag || *debugFlag || *debugXMLDir != "" {
+			providerSet["sparkle"] = true
+		}
+		explicitSource := *appsFlag || *brewFlag || *appStoreFlag || strings.TrimSpace(*rootsFlag) != ""
+		useApps := !explicitSource || *appsFlag || strings.TrimSpace(*rootsFlag) != ""
+		useBrew := !explicitSource || *brewFlag
+		useAppStore := !explicitSource || *appStoreFlag
+		useMicrosoft := providerSet["microsoft"] && useApps
+		useSparkle := providerSet["sparkle"] && useApps
+
 		result := inventory.Result{Applications: []inventory.Application{}, Warnings: []inventory.Warning{}, Roots: []string{}}
 		if useApps {
 			result = inventory.Scan(context.Background(), selectedRoots(*rootsFlag))
+			if !*includeSystem {
+				result.Applications = inventory.FilterSystemApplications(result.Applications)
+			}
 		}
 		if useBrew {
 			b := inventory.ScanHomebrew(context.Background())
@@ -60,7 +74,12 @@ func run(args []string) int {
 			}
 		}
 		inventory.Reconcile(&result)
-		if (*sparkleFlag || *debugFlag || *debugXMLDir != "") && useApps {
+		if useMicrosoft {
+			m := inventory.ScanMicrosoft(context.Background())
+			result.Microsoft = &m
+			inventory.ApplyMicrosoft(&result)
+		}
+		if useSparkle {
 			var progress inventory.SparkleProgressFunc
 			if !*quietFlag || *debugFlag || *debugXMLDir != "" {
 				fmt.Fprintf(os.Stderr, "Sparkle: examining %d applications for update feeds\n", len(result.Applications))
@@ -112,7 +131,6 @@ func run(args []string) int {
 				}
 			}
 		}
-		var err error
 		if *jsonOut {
 			err = output.JSON(os.Stdout, result)
 		} else {
@@ -178,15 +196,38 @@ func usage() {
 	fmt.Println(`macup — read-only macOS software inventory
 
 Usage:
-  macup scan [--json] [--apps] [--brew] [--appstore] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--quiet] [--roots /Applications,/Users/me/Applications]
+  macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--quiet] [--roots /Applications,/Users/me/Applications]
   macup doctor [--roots /Applications]
   macup help
 
-With no source flags, all three inventory sources are scanned.
+With no source flags, all available inventory sources are scanned.
+--providers selects update-check providers; defaults to all.
 Source flags select only the named sources; --roots implies --apps.
+System-volume apps are hidden by default; --include-system shows them.
 --sparkle enables opt-in HTTPS appcast checks for discovered apps.
 --sparkle-debug implies --sparkle and explains release filtering on stderr.
 --sparkle-debug-xml DIR also saves structural XML samples (without values) to DIR.
 --quiet suppresses routine progress on stderr (debug output remains enabled).
 No applications are updated or modified.`)
+}
+
+func parseProviders(raw string) (map[string]bool, error) {
+	p := map[string]bool{}
+	parts := strings.Split(strings.ToLower(strings.TrimSpace(raw)), ",")
+	for _, part := range parts {
+		switch strings.TrimSpace(part) {
+		case "all":
+			p["microsoft"] = true
+			p["sparkle"] = true
+		case "none":
+			if len(parts) != 1 {
+				return nil, fmt.Errorf("--providers=none cannot be combined with other providers")
+			}
+		case "microsoft", "sparkle":
+			p[strings.TrimSpace(part)] = true
+		default:
+			return nil, fmt.Errorf("unknown update provider %q (choose all, none, microsoft, sparkle)", part)
+		}
+	}
+	return p, nil
 }

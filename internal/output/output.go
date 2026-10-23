@@ -46,7 +46,7 @@ func Table(w io.Writer, r inventory.Result) error {
 		return err
 	}
 	for _, x := range rows {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", x.source, x.name, nonempty(x.installed), nonempty(x.available), x.status, nonempty(x.updateSource), nonempty(x.detail)); err != nil {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", x.source, x.name, nonempty(x.installed), availableLabel(x.available, x.status), x.status, nonempty(x.updateSource), nonempty(x.detail)); err != nil {
 			return err
 		}
 	}
@@ -68,6 +68,18 @@ func Table(w io.Writer, r inventory.Result) error {
 			}
 		}
 	}
+	if r.Microsoft != nil {
+		if r.Microsoft.CheckStatus == "checked" {
+			if _, err := fmt.Fprintf(w, "provider (microsoft): checked; %d updates reported (%s response); core Office apps marked CURRENT when no update is offered\n", len(r.Microsoft.Updates), r.Microsoft.ResponseFormat); err != nil {
+				return err
+			}
+		}
+		for _, x := range r.Microsoft.Warnings {
+			if _, err := fmt.Fprintf(w, "warning (microsoft): %s\n", x); err != nil {
+				return err
+			}
+		}
+	}
 	if r.AppStore != nil {
 		for _, x := range r.AppStore.Warnings {
 			if _, err := fmt.Fprintf(w, "warning (appstore): %s\n", x); err != nil {
@@ -82,4 +94,18 @@ func nonempty(v string) string {
 		return "-"
 	}
 	return v
+}
+
+// The available-version cell describes whether a newer applicable version is
+// known, not whether a provider happened to populate a string field.
+func availableLabel(version, status string) string {
+	if version != "" {
+		return version
+	}
+	switch status {
+	case "CURRENT", "NOT FLAGGED":
+		return "—" // checked: no applicable update reported
+	default:
+		return "?" // no reliable available-version information
+	}
 }

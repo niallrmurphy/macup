@@ -39,3 +39,27 @@ func TestUpdateSourceColumn(t *testing.T) {
 		}
 	}
 }
+
+func TestMicrosoftProviderSummary(t *testing.T) {
+	r := inventory.Result{Microsoft: &inventory.MicrosoftResult{Available: true, CheckStatus: "checked", ResponseFormat: "text", Updates: []inventory.MicrosoftUpdate{}}, Entries: []inventory.Entry{{Name: "Microsoft Word", Status: "UNCHECKED", Sources: []string{"apps"}}}}
+	var b bytes.Buffer
+	if err := Table(&b, r); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "provider (microsoft): checked; 0 updates reported (text response)") {
+		t.Fatalf("missing provider status: %s", b.String())
+	}
+	if !strings.Contains(b.String(), "UNCHECKED") {
+		t.Fatalf("incorrect app-level status: %s", b.String())
+	}
+}
+
+func TestAvailableVersionLabels(t *testing.T) {
+	for _, tc := range []struct{ version, status, want string }{
+		{"", "CURRENT", "—"}, {"", "UNCHECKED", "?"}, {"", "UNKNOWN", "?"}, {"1.2", "OUTDATED", "1.2"},
+	} {
+		if got := availableLabel(tc.version, tc.status); got != tc.want {
+			t.Errorf("%q/%q = %q, want %q", tc.version, tc.status, got, tc.want)
+		}
+	}
+}

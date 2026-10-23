@@ -14,7 +14,8 @@ A small, **read-only**, CLI-first macOS application inventory tool written in Go
 ```sh
 go build -o macup ./cmd/macup
 ./macup scan                     # all sources (apps, Homebrew, App Store)
-./macup scan --apps              # .app bundles only
+./macup scan --apps              # user-updateable .app bundles (hides macOS system apps)
+./macup scan --apps --include-system # also show Apple OS-managed system apps
 ./macup scan --brew              # Homebrew only
 ./macup scan --appstore          # Mac App Store only (mas required)
 ./macup scan --apps --brew       # two explicitly selected sources
@@ -26,7 +27,13 @@ go build -o macup ./cmd/macup
 
 `--roots` sets the directories searched for `.app` bundles. Defaults are
 `/Applications`, `/System/Applications`, `/System/Applications/Utilities`, and
-`~/Applications`.
+`~/Applications`. Bundles within `/System/Applications` and
+`/System/Library/CoreServices/Applications` are excluded from the application
+results by default, because they are delivered with macOS updates. Use
+`--include-system` to show them. The flag changes filesystem-app visibility
+only; it does not turn on a provider by itself. Apple-distributed apps in
+`/Applications` are *not* automatically excluded because they may have
+independent App Store or vendor update mechanisms.
 
 If any source flags are present, only those sources are scanned. With no
 source flags, all sources are scanned. `--roots` also enables the `apps` source.
@@ -164,3 +171,38 @@ attribute values, feed contents, download URLs, or application binaries.
 The sample directory is created with mode `0700` and files with `0600`.
 Inspect samples before sharing: element/attribute names themselves may disclose
 application-specific metadata. Network checks remain HTTPS-only and read-only.
+
+## Microsoft AutoUpdate (read-only)
+
+`macup scan --providers=microsoft` checks pending updates through the locally installed
+Microsoft AutoUpdate `msupdate --list --format plist`. It never installs updates.
+The default scan also attempts this provider if available. On macOS, the first
+invocation may require a privacy permission prompt. `msupdate` can report only
+products registered with MAU; it does not cover every Microsoft app.
+
+The provider reports only pending updates. A product omitted by MAU is not
+necessarily current. Parsed updates are linked to an unambiguous discovered
+application when possible; otherwise they remain visible independently.
+If MAU's output schema differs from the documented examples, a warning is
+reported instead of guessing at an update.
+
+### Inventory sources versus update providers
+
+Inventory source flags (`--apps`, `--brew`, `--appstore`) select *what to inventory*;
+with none specified, all available inventory sources are used. `--roots`
+implies the app inventory source.
+
+Update-check providers are separate. `--providers=all` (the default) enables
+Sparkle and Microsoft AutoUpdate where application scanning is selected.
+`--providers=none` disables both, while `--providers=microsoft` or
+`--providers=sparkle` runs only the named checker. Examples:
+
+```sh
+macup scan --apps --providers=microsoft
+macup scan --providers=none
+macup scan --apps --providers=microsoft,sparkle --json
+```
+
+Provider failures do not suppress discovered applications. MAU diagnostics now
+include a bounded excerpt of the command output on conversion failure, which
+may contain machine-specific data; inspect logs before sharing.

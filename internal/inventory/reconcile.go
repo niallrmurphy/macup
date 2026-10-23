@@ -41,7 +41,7 @@ func Reconcile(r *Result) {
 		}
 		for _, p := range r.Homebrew.Packages {
 			source := "brew-" + p.Kind
-			status := "NOT FLAGGED"
+			status := "CURRENT"
 			if p.Outdated {
 				status = "OUTDATED"
 			}
@@ -82,7 +82,7 @@ func Reconcile(r *Result) {
 			masCounts[p.ID]++
 		}
 		for _, p := range r.AppStore.Packages {
-			status := "NOT FLAGGED"
+			status := "CURRENT"
 			if p.Outdated {
 				status = "OUTDATED"
 			}

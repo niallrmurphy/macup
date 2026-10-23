@@ -436,7 +436,13 @@ func ApplySparkle(r *Result) {
 			e.Sources = append(e.Sources, "sparkle")
 		} else if c.Status == "NOT FLAGGED" {
 			e.UpdateSource = "sparkle"
-			e.Status = "NOT FLAGGED"
+			e.Status = "CURRENT"
+			e.Sources = append(e.Sources, "sparkle")
+		} else if c.Status == "UNCHECKED" {
+			// An identified feed which could not be evaluated is different
+			// from an app for which no provider was found or invoked.
+			e.Status = "UNKNOWN"
+			e.UpdateSource = "sparkle"
 			e.Sources = append(e.Sources, "sparkle")
 		}
 		if c.Reason != "" {
