@@ -26,9 +26,11 @@ type Warning struct {
 }
 
 type Result struct {
-	Applications []Application `json:"applications"`
-	Warnings     []Warning     `json:"warnings"`
-	Roots        []string      `json:"roots"`
+	Applications []Application   `json:"applications"`
+	Warnings     []Warning       `json:"warnings"`
+	Roots        []string        `json:"roots"`
+	Homebrew     *HomebrewResult `json:"homebrew,omitempty"`
+	AppStore     *AppStoreResult `json:"appstore,omitempty"`
 }
 
 // DefaultRoots covers common system-wide and per-user app locations.
