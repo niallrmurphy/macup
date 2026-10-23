@@ -1,6 +1,6 @@
 # macup
 
-A small, **read-only**, CLI-first macOS application inventory tool written in Go. Milestone 1 for a future open-source application update checker.
+A small, **read-only**, CLI-first macOS application inventory tool written in Go. An early milestone toward an open-source application update checker.
 
 **Current functionality:** find `.app` bundles, read `Contents/Info.plist`, and output an inventory as a table or JSON. This release **does not check for updates**, assess CVEs, or install anything.
 
@@ -9,28 +9,37 @@ A small, **read-only**, CLI-first macOS application inventory tool written in Go
 - macOS (Apple Silicon or Intel), Go **1.22+** to build.
 - No third-party Go dependencies. `plutil` (included with macOS) is used to decode binary plists.
 
-## Build
+## Build and scan
 
 ```sh
 go build -o macup ./cmd/macup
-./macup scan
-./macup scan --json
+./macup scan                     # all sources (apps, Homebrew, App Store)
+./macup scan --apps              # .app bundles only
+./macup scan --brew              # Homebrew only
+./macup scan --appstore          # Mac App Store only (mas required)
+./macup scan --apps --brew       # two explicitly selected sources
+./macup scan --brew --appstore --json
+./macup scan --roots ~/Applications # custom app roots only
 ./macup doctor
 ```
 
-Or run directly:
+`--roots` sets the directories searched for `.app` bundles. Defaults are
+`/Applications`, `/System/Applications`, `/System/Applications/Utilities`, and
+`~/Applications`.
 
-```sh
-go run ./cmd/macup scan --json
-```
+If any source flags are present, only those sources are scanned. With no
+source flags, all sources are scanned. `--roots` also enables the `apps` source.
 
-Custom scan roots:
+Optional dependencies: Homebrew (`brew`) for the Homebrew source and the
+[mas CLI](https://github.com/mas-cli/mas) for the App Store source.
+Missing tools produce warnings instead of aborting the scan.
 
-```sh
-./macup scan --roots "$HOME/Applications,/Applications" --json
-```
-
-Default roots: `/Applications`, `/System/Applications`, `/System/Applications/Utilities`, and `~/Applications` (if available).
+All selected sources are rendered in one table with the same columns.
+A package `NOT FLAGGED` as outdated is **not** guaranteed to be current with
+its vendor. The plain `.app` scan has no update-checking source and uses
+`UNCHECKED`. Cask and App Store entries may also describe apps found in the
+filesystem; the current table keeps these as source-specific rows rather than
+making speculative identity matches.
 
 ## JSON format
 
@@ -64,9 +73,9 @@ The core inventory parser and scanner tests can run on Linux, but testing on a M
 ## Roadmap
 
 1. **Milestone 1 (this release):** safe local inventory, JSON/table, diagnostics.
-2. Homebrew provider using `brew outdated --json=v2`.
+2. Homebrew inventory provider with `brew list --versions` and `brew outdated --json=v2` (implemented).
 3. Sparkle appcast support with correct version and channel semantics.
-4. Mac App Store provider through `mas`, caching, error reporting, end-to-end macOS CI.
+4. App Store inventory via `mas` (implemented); caching, error reporting, end-to-end macOS CI remain future work.
 
 The planned `macup outdated` and `macup audit` commands **do not exist yet**.
 
