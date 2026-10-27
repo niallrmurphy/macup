@@ -86,3 +86,17 @@ func TestCacheKeys(t *testing.T) {
 		t.Fatal(k1, k2, k3)
 	}
 }
+
+func TestProvidersIncludeLookup(t *testing.T) {
+	all, err := parseProviders("all")
+	if err != nil || !all["lookup"] || !all["sparkle"] {
+		t.Fatalf("%v %v", all, err)
+	}
+	only, err := parseProviders("lookup")
+	if err != nil || !only["lookup"] || only["sparkle"] {
+		t.Fatalf("%v %v", only, err)
+	}
+	if _, err = parseProviders("none,lookup"); err == nil {
+		t.Fatal("none must not combine")
+	}
+}

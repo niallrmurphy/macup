@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -37,7 +38,11 @@ func commandBrew(ctx context.Context, args ...string) ([]byte, error) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	return exec.CommandContext(cctx, path, args...).Output()
+	cmd := exec.CommandContext(cctx, path, args...)
+	// list, outdated and info read local state; make sure Homebrew does not
+	// decide to refresh its taps from the network on our behalf.
+	cmd.Env = append(os.Environ(), "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_ANALYTICS=1")
+	return cmd.Output()
 }
 
 // ScanHomebrew discovers installed packages and marks entries outdated according

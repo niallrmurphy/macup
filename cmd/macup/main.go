@@ -93,13 +93,15 @@ func run(args []string) int {
 		allFlag := fs.Bool("all", false, "show entries already known to be current (table output only)")
 		statusFlag := fs.String("status", "", "show only these statuses, comma-separated, e.g. 'NO SOURCE' or 'OUTDATED,UPGRADE AVAILABLE' (table output only)")
 		pathsFlag := fs.Bool("paths", false, "show bundle paths in the DETAIL column (table output only)")
-		lookupFlag := fs.Bool("lookup", false, "query public sources (App Store catalogue, Homebrew cask index, release feeds) for apps no provider evaluated (network)")
+		lookupFlag := fs.Bool("lookup", false, "enable the lookup provider (on by default): public catalogues and release feeds for apps no other provider evaluated")
+		noLookupFlag := fs.Bool("no-lookup", false, "disable the lookup provider for this run")
 		cacheTTL := fs.Duration("cache-ttl", time.Hour, "reuse Sparkle, lookup, Microsoft and Adobe results younger than this; 0 disables the cache")
 		freshFlag := fs.Bool("fresh", false, "ignore cached provider results for this run (results are still stored)")
 		debugFlag := fs.Bool("sparkle-debug", false, "print Sparkle per-feed diagnostics to stderr (implies --sparkle)")
 		debugXMLDir := fs.String("sparkle-debug-xml", "", "directory for sanitized appcast XML structure samples (implies --sparkle-debug)")
 		appStoreFlag := fs.Bool("appstore", false, "scan Mac App Store software via mas")
-		providersFlag := fs.String("providers", "all", "update-check providers: all, none, microsoft, sparkle, adobe (comma-separated)")
+		providersFlag := fs.String("providers", "all", "update-check providers: all, none, microsoft, sparkle, adobe, lookup (comma-separated)")
+		offlineFlag := fs.Bool("offline", false, "nothing leaves the machine: local inventory and Homebrew's local state only; no providers, no App Store query, no cache")
 		rootsFlag := fs.String("roots", "", "comma-separated directories to scan (defaults to standard macOS app directories)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
@@ -117,13 +119,28 @@ func run(args []string) int {
 		if *sparkleFlag || *debugFlag || *debugXMLDir != "" {
 			providerSet["sparkle"] = true
 		}
+		if *lookupFlag {
+			providerSet["lookup"] = true
+		}
+		if *noLookupFlag {
+			delete(providerSet, "lookup")
+		}
 		explicitSource := *appsFlag || *brewFlag || *appStoreFlag || strings.TrimSpace(*rootsFlag) != ""
 		useApps := !explicitSource || *appsFlag || strings.TrimSpace(*rootsFlag) != ""
 		useBrew := !explicitSource || *brewFlag
 		useAppStore := !explicitSource || *appStoreFlag
+		if *offlineFlag {
+			// Nothing leaves the machine. mas asks Apple for outdated apps, every
+			// provider talks to a vendor or catalogue, and the cache holds
+			// answers from earlier network runs; all three are off.
+			providerSet = map[string]bool{}
+			useAppStore = false
+			*cacheTTL = 0
+		}
 		useMicrosoft := providerSet["microsoft"] && useApps
 		useAdobe := providerSet["adobe"] && useApps
 		useSparkle := providerSet["sparkle"] && useApps
+		useLookup := providerSet["lookup"] && useApps
 
 		// Every source and provider announces itself on stderr, so slow steps
 		// (msupdate, catalogue fetches) are visible without touching stdout.
@@ -136,6 +153,9 @@ func run(args []string) int {
 		store.Prune()
 		cached := func(key string, v any) bool { return !*freshFlag && store.Get(key, v) }
 		result := inventory.Result{Applications: []inventory.Application{}, Warnings: []inventory.Warning{}, Roots: []string{}}
+		if *offlineFlag {
+			announce("Offline: nothing leaves the machine this run")
+		}
 		if useApps {
 			roots := selectedRoots(*rootsFlag)
 			announce("Applications: scanning %d roots for .app bundles", len(roots))
@@ -294,8 +314,21 @@ func run(args []string) int {
 			// the App Store, a browser, a vendor agent, or their parent product.
 			inventory.ApplyUpdaters(&result, probe.Updater)
 		}
-		if useApps && *lookupFlag {
+		if useLookup {
 			runLookups(context.Background(), &result, announce, cached, store.Put)
+		} else if useApps && !*offlineFlag {
+			unresolved := 0
+			for _, e := range result.Entries {
+				if inventory.LookupEligible(e) {
+					unresolved++
+				}
+			}
+			if unresolved > 0 {
+				announce("Lookup: skipped; %d applications have no version source (public catalogues and feeds are consulted with --lookup)", unresolved)
+			}
+		}
+		if *offlineFlag {
+			announce("Offline: no network provider ran; statuses reflect local evidence and Homebrew's local state only")
 		}
 		if *jsonOut {
 			err = output.JSON(os.Stdout, result)
@@ -545,7 +578,7 @@ func usage() {
 	fmt.Println(`macup — read-only macOS software inventory
 
 Usage:
-  macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle,adobe] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--lookup] [--cache-ttl 1h] [--fresh] [--quiet] [--verbose] [--all] [--status "NO SOURCE"] [--paths] [--roots /Applications,/Users/me/Applications]
+  macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle,adobe,lookup] [--offline] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--lookup|--no-lookup] [--cache-ttl 1h] [--fresh] [--quiet] [--verbose] [--all] [--status "NO SOURCE"] [--paths] [--roots /Applications,/Users/me/Applications]
   macup probe [--lookup] [--origins] [--fetch] [--model llama3.2:latest] [--max-pages 3] /Applications/Example.app
   macup probe --all [--roots /Applications] [--include-system] [--lookup] [--origins] [--fetch] [--model MODEL] [--workers 2]
   macup doctor [--roots /Applications]
@@ -571,14 +604,15 @@ func parseProviders(raw string) (map[string]bool, error) {
 			p["microsoft"] = true
 			p["sparkle"] = true
 			p["adobe"] = true
+			p["lookup"] = true
 		case "none":
 			if len(parts) != 1 {
 				return nil, fmt.Errorf("--providers=none cannot be combined with other providers")
 			}
-		case "microsoft", "sparkle", "adobe":
+		case "microsoft", "sparkle", "adobe", "lookup":
 			p[strings.TrimSpace(part)] = true
 		default:
-			return nil, fmt.Errorf("unknown update provider %q (choose all, none, microsoft, sparkle, adobe)", part)
+			return nil, fmt.Errorf("unknown update provider %q (choose all, none, microsoft, sparkle, adobe, lookup)", part)
 		}
 	}
 	return p, nil

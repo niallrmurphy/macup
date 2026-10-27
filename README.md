@@ -2,7 +2,7 @@
 
 A small, **read-only**, CLI-first macOS application inventory tool written in Go. An early milestone toward an open-source application update checker.
 
-**Current functionality:** find `.app` bundles, read `Contents/Info.plist`, and output an inventory as a table or JSON. This release checks Homebrew and App Store outdated status, and supports optional Sparkle appcast checking. It does not assess CVEs or install anything.
+**Current functionality:** find `.app` bundles, read `Contents/Info.plist`, and output an inventory as a table or JSON, with update status from Homebrew, the App Store, Sparkle appcasts, Microsoft AutoUpdate, the Adobe catalogue, and public lookups for everything else. It does not assess CVEs or install anything. A default scan contacts vendors and catalogues; `macup scan --offline` guarantees that nothing leaves the machine (see [What leaves the machine](#what-leaves-the-machine)).
 
 ## Requirements
 
@@ -21,11 +21,12 @@ go build -o macup ./cmd/macup
 ./macup scan --apps --brew       # two explicitly selected sources
 ./macup scan --brew --appstore --json
 ./macup scan --roots ~/Applications # custom app roots only
-./macup scan --apps --sparkle     # opt-in Sparkle appcast HTTP requests
+./macup scan --offline           # nothing leaves the machine
+./macup scan --apps --sparkle     # Sparkle appcast checks only (on by default anyway)
 ./macup scan --all               # include entries already known to be current
 ./macup scan --status "NO SOURCE" # only entries with these statuses (comma-separated)
 ./macup scan --paths             # include bundle paths in the DETAIL column
-./macup scan --lookup            # public lookups for apps no provider evaluated (network)
+./macup scan --no-lookup         # skip the public catalogue and feed lookups this run
 ./macup scan --fresh             # ignore cached provider results this run
 ./macup scan --cache-ttl 10m     # reuse provider results younger than ten minutes
 ./macup doctor
@@ -70,10 +71,11 @@ one. These labels are read-only observations, not verdicts on currency.
 `NO SOURCE` remains for bundles with no recognisable mechanism: macup found
 nothing to check, which is different from not having checked.
 
-`--lookup` goes further for anything still without a provider verdict. It
-asks the App Store catalogue by bundle identifier, the Homebrew cask index
-by app name, and release feeds derived from evidence in the bundle, and
-folds the answer in: a source listing a newer version makes the entry
+The `lookup` provider, on by default (`--no-lookup` or
+`--providers=sparkle,microsoft,adobe` to leave it out), goes further for
+anything still without a provider verdict. It asks the App Store catalogue by
+bundle identifier, the Homebrew cask index by app name, and release feeds
+derived from evidence in the bundle, and folds the answer in: a source listing a newer version makes the entry
 `OUTDATED` with that source named in `UPDATE SOURCE` and `lookup` added to
 `SOURCE`; a source listing the same version makes it `NOT FLAGGED`; anything
 less conclusive is noted in `DETAIL`. Catalogues outrank feeds derived from
@@ -113,7 +115,7 @@ making speculative identity matches.
 - Reads only top-level scalar plist keys. If the plist is binary, invokes `/usr/bin/plutil` to convert it to XML in memory.
 - A broken bundle appears as a warning, not an application. Missing scan roots are silently skipped.
 - App bundles outside the configured roots, and some applications without conventional Info.plist files, may be missed.
-- Does not execute bundled app code, use elevated privileges, or modify software. Sparkle checks perform HTTPS requests only when explicitly enabled.
+- Does not execute bundled app code, use elevated privileges, or modify software. Network requests are described under [What leaves the machine](#what-leaves-the-machine) and `--offline` turns them all off.
 
 ## Development
 
@@ -129,7 +131,7 @@ The core inventory parser and scanner tests can run on Linux, but testing on a M
 
 1. **Milestone 1 (this release):** safe local inventory, JSON/table, diagnostics.
 2. Homebrew inventory provider with `brew list --versions` and `brew outdated --json=v2` (implemented).
-3. Sparkle appcast support (conservative, opt-in initial implementation).
+3. Sparkle appcast support (conservative; on by default, `--providers` controls it).
 4. App Store inventory via `mas` (implemented); caching, error reporting, end-to-end macOS CI remain future work.
 
 The planned `macup outdated` and `macup audit` commands **do not exist yet**.
@@ -160,9 +162,10 @@ validate App Store receipts. It runs read-only and only when `mas` is present.
 
 ### Sparkle appcast checking (experimental)
 
-`macup scan --sparkle` scans `.app` bundles and checks `SUFeedURL` appcasts;
-`--apps --sparkle` is equivalent. Sparkle checks are **not** part of the default
-scan because they make outbound network requests to URLs advertised by apps.
+The Sparkle provider checks appcasts for `.app` bundles and is part of the
+default provider set; `--providers=microsoft,adobe` or `--offline` leaves it
+out, and `--sparkle` turns it on alone. It makes outbound requests to feed
+URLs advertised by the apps themselves.
 Only HTTPS feeds are fetched (no redirects, 8-second timeout, 2 MiB cap).
 A successful check may add `sparkle` provenance and an available version to
 filesystem-only app rows. Raw check results are included under `sparkle` in JSON.
@@ -176,6 +179,43 @@ updates, update feed overrides and signature validation are not implemented.
 parsed feed; it is **not** proof of being fully up-to-date. No archives are
 downloaded or installed. Feed URLs in applications should be treated as
 untrusted, especially on untrusted machines.
+
+## What leaves the machine
+
+macup is read-only, but a default scan does talk to the network, because
+that is where update information lives. This is exactly what each step
+contacts, so you can choose a mode you are comfortable with.
+
+| Step | Contacts | Sends |
+|---|---|---|
+| Application inventory, bundle inspection, classification | nothing | nothing |
+| Homebrew (`brew list`, `brew outdated`, `brew info`) | nothing: local tap state, auto-update suppressed | nothing |
+| App Store (`mas outdated`) | Apple | your App Store account's installed apps, as `mas` does |
+| Sparkle | each app's own feed host | the request itself; Sparkle feeds learn your IP and what app asked |
+| Microsoft AutoUpdate (`msupdate --list`) | Microsoft | what MAU normally sends |
+| Adobe catalogue | Adobe | a catalogue fetch |
+| Lookup: App Store catalogue | Apple's iTunes Search API | bundle identifiers of apps with no other source |
+| Lookup: Homebrew cask index | formulae.brew.sh | a download of the public index; matching happens locally |
+| Lookup: derived feeds and generic endpoints | GitHub, GitLab, SourceForge, or the vendor named in the bundle | the request itself |
+| Result cache | nothing | nothing; stored under `~/Library/Caches/macup` |
+
+Modes:
+
+- **`macup scan`** does all of the above.
+- **`macup scan --no-lookup`** keeps the vendor channels (Sparkle, MAU, Adobe,
+  `mas`) and skips the two public catalogues and derived feeds.
+- **`macup scan --providers=none`** runs no update provider at all but still
+  lets `mas` ask Apple for outdated apps; combine with `--apps --brew` to
+  avoid that.
+- **`macup scan --offline`** guarantees nothing leaves the machine: local
+  inventory, bundle inspection and classification, and Homebrew's local
+  state. No provider runs, `mas` is not asked, and cached answers from
+  earlier network runs are not consulted either, so every status reflects
+  only what is on disk now. Expect `NO SOURCE`, `SELF-UPDATING` and `MANAGED`
+  rather than versions.
+
+`macup probe` is opt-in at every network stage and documented separately
+below.
 
 ### Result cache
 
