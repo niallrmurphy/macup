@@ -30,10 +30,14 @@ func lookups(ctx context.Context, r *Report) {
 			}
 		}
 	}
-	if l, err := lookupCask(ctx, r.Application, installed); err != nil {
+	if l, c, err := lookupCask(ctx, r.Application, installed); err != nil {
 		r.warn("cask lookup: %s", err.Error())
 	} else if l != nil {
 		r.Lookups = append(r.Lookups, *l)
+		// A cask's download or homepage often names the project's forge (kitty,
+		// cool-retro-term), which gives a release feed for free.
+		deriveForgeFeeds(r, c.URL)
+		deriveForgeFeeds(r, c.Homepage)
 	}
 	done := map[string]bool{}
 	for _, c := range r.Candidates {
@@ -350,14 +354,14 @@ func rawStrings(raw json.RawMessage) []string {
 	return out
 }
 
-func lookupCask(ctx context.Context, app inventory.Application, installed string) (*Lookup, error) {
+func lookupCask(ctx context.Context, app inventory.Application, installed string) (*Lookup, *cask, error) {
 	idx, err := loadCaskIndex(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	c, note := idx.match(app)
 	if c == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	version := c.Version
 	if i := strings.Index(version, ","); i > 0 {
@@ -367,11 +371,11 @@ func lookupCask(ctx context.Context, app inventory.Application, installed string
 	if version == "latest" || version == "" {
 		l.Comparison = "unknown"
 		l.Note += "; cask is unversioned"
-		return l, nil
+		return l, c, nil
 	}
 	l.Version = version
 	l.Comparison = comparison(installed, version)
-	return l, nil
+	return l, c, nil
 }
 
 // match prefers an app filename hit, using the bundle identifier to break

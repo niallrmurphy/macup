@@ -29,14 +29,8 @@ var frameworkFamilies = []struct{ needle, family string }{
 
 func inspectBundle(ctx context.Context, r *Report, fields map[string]string) {
 	path := r.Application.Path
-	if entries, err := os.ReadDir(filepath.Join(path, "Contents", "Frameworks")); err == nil {
-		for _, e := range entries {
-			for _, f := range frameworkFamilies {
-				if strings.Contains(e.Name(), f.needle) {
-					r.addFamily(f.family)
-				}
-			}
-		}
+	for _, f := range detectFamilies(path) {
+		r.addFamily(f)
 	}
 	if _, err := os.Stat(filepath.Join(path, "Contents", "_MASReceipt", "receipt")); err == nil {
 		r.addFamily("mas-receipt")
@@ -79,6 +73,60 @@ func inspectBundle(ctx context.Context, r *Report, fields map[string]string) {
 		add(r, "https://sourceforge.net/projects/"+proj+"/rss?path=/", "derived:sourceforge", 80)
 	}
 	sortCandidates(r)
+}
+
+var updaterName = regexp.MustCompile(`(?i)(updater|autoupdate|update[-_]?installer|softwareupdate)`)
+var familyDirs = []string{"Contents/Frameworks", "Contents/MacOS", "Contents/Helpers", "Contents/Library", "Contents/PlugIns"}
+
+// detectFamilies looks for updater frameworks and vendor updater helpers.
+// Chromium-derived browsers nest Sparkle several levels inside their own
+// framework, and Docker wraps a Squirrel app inside Contents/MacOS, so the
+// walk is deep but bounded. A helper named like an updater becomes the
+// family "updater:<name>".
+func detectFamilies(path string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(f string) {
+		if !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	visited := 0
+	for _, dir := range familyDirs {
+		base := filepath.Join(path, filepath.FromSlash(dir))
+		filepath.WalkDir(base, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return filepath.SkipDir
+			}
+			visited++
+			if visited > 4000 {
+				return filepath.SkipAll
+			}
+			name := d.Name()
+			if d.IsDir() {
+				depth := strings.Count(strings.TrimPrefix(p, base), string(os.PathSeparator))
+				if depth > 7 || strings.HasSuffix(name, ".lproj") || name == "Resources" || name == "_CodeSignature" {
+					return filepath.SkipDir
+				}
+			}
+			for _, f := range frameworkFamilies {
+				if strings.Contains(name, f.needle) && (strings.HasSuffix(name, ".framework") || name == "ShipIt" || name == f.needle) {
+					add(f.family)
+				}
+			}
+			if updaterName.MatchString(name) && !strings.Contains(strings.ToLower(name), "sparkle") && (d.IsDir() && strings.HasSuffix(name, ".app") || !d.IsDir() && d.Type().IsRegular()) {
+				if info, e := d.Info(); e == nil && (d.IsDir() || info.Mode()&0o111 != 0) {
+					add("updater:" + strings.TrimSuffix(name, ".app"))
+				}
+			}
+			if d.IsDir() && strings.HasSuffix(name, ".app") && seen["updater:"+strings.TrimSuffix(name, ".app")] {
+				return filepath.SkipDir
+			}
+			return nil
+		})
+	}
+	return out
 }
 
 // electronUpdaterCandidates parses the flat YAML electron-builder writes.

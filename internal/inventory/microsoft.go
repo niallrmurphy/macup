@@ -187,7 +187,7 @@ func ApplyMicrosoft(r *Result) {
 	// extend that inference to Edge, Teams, or other Microsoft products.
 	for i := range r.Entries {
 		e := &r.Entries[i]
-		if mauCoveredEntry(*e) && e.Status == "UNCHECKED" {
+		if mauCoveredEntry(*e) && e.Status == "NO SOURCE" {
 			e.Status = "CURRENT"
 			e.UpdateSource = "microsoft-autoupdate"
 		}
@@ -214,7 +214,7 @@ func ApplyMicrosoft(r *Result) {
 		}
 		if target >= 0 {
 			e := &r.Entries[target]
-			if e.UpdateSource == "" || e.Status == "UNCHECKED" || e.Status == "NOT FLAGGED" || e.Status == "CURRENT" {
+			if e.UpdateSource == "" || e.Status == "NO SOURCE" || e.Status == "NOT FLAGGED" || e.Status == "CURRENT" {
 				e.Available = u.AvailableVersion
 				e.Status = "OUTDATED"
 				e.UpdateSource = "microsoft-autoupdate"

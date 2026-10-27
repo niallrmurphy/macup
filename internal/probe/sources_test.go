@@ -438,3 +438,35 @@ func TestChooseAppcastPrefersArchitecture(t *testing.T) {
 		t.Fatal("non-appcast URL accepted")
 	}
 }
+
+func TestDetectFamiliesNested(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "Brave.app")
+	for _, d := range []string{
+		"Contents/Frameworks/Brave Browser Framework.framework/Versions/1/Frameworks/Sparkle.framework",
+		"Contents/Frameworks/Brave Browser Framework.framework/Versions/1/Helpers/BraveUpdater.app/Contents/MacOS",
+		"Contents/MacOS/Docker Desktop.app/Contents/Frameworks/Squirrel.framework",
+		"Contents/Resources/Sparkle.framework",
+	} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "Contents/MacOS/opera_autoupdate"), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, f := range detectFamilies(root) {
+		got[f] = true
+	}
+	for _, want := range []string{"sparkle", "squirrel", "updater:BraveUpdater", "updater:opera_autoupdate"} {
+		if !got[want] {
+			t.Fatalf("missing %s in %v", want, got)
+		}
+	}
+	r := Report{Application: inventory.Application{Name: "Opera", BundleID: "com.operasoftware.Opera", Path: root}}
+	r.addFamily("updater:opera_autoupdate")
+	classify(&r, nil)
+	if r.Management == nil || r.Management.Kind != "self" || r.Management.Detail != "embedded updater: opera_autoupdate" {
+		t.Fatalf("%+v", r.Management)
+	}
+}

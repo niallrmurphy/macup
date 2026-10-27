@@ -256,7 +256,7 @@ func ApplyAdobe(r *Result) {
 	for i := range r.Entries {
 		e := &r.Entries[i]
 		code, ok := adobeApps[e.Name]
-		if !ok || e.Path == "" || e.Status != "UNCHECKED" {
+		if !ok || e.Path == "" || e.Status != "NO SOURCE" {
 			continue
 		}
 		// Bundle IDs differ across Adobe generations. Require an exact app name,

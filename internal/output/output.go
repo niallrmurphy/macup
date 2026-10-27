@@ -27,6 +27,9 @@ type TableOptions struct {
 	// Statuses, when non-empty, restricts the table to these statuses
 	// (case-insensitive) and takes precedence over ShowAll.
 	Statuses []string
+	// Paths puts the bundle path (and cask) in DETAIL. Off by default because
+	// it doubles the table width; provider reasons are still shown.
+	Paths bool
 }
 
 func (o TableOptions) keep(status string) bool {
@@ -43,7 +46,7 @@ func (o TableOptions) keep(status string) bool {
 
 // Table presents every entry from all requested inventory sources.
 func Table(w io.Writer, r inventory.Result) error {
-	return TableWith(w, r, TableOptions{ShowAll: true})
+	return TableWith(w, r, TableOptions{ShowAll: true, Paths: true})
 }
 
 // currentStatus is a provider's positive statement that no update applies.
@@ -64,12 +67,15 @@ func TableWith(w io.Writer, r inventory.Result, opts TableOptions) error {
 			hidden++
 			continue
 		}
-		detail := e.Path
-		if detail == "" {
-			detail = e.Detail
-		}
-		if e.Package != "" && e.Path != "" {
-			detail += " (cask:" + e.Package + ")"
+		detail := e.Detail
+		if opts.Paths && e.Path != "" {
+			detail = e.Path
+			if e.Package != "" {
+				detail += " (cask:" + e.Package + ")"
+			}
+			if e.Detail != "" {
+				detail += "; " + e.Detail
+			}
 		}
 		rows = append(rows, row{strings.Join(e.Sources, "+"), e.Name, e.Installed, e.Available, e.Status, e.UpdateSource, detail})
 	}

@@ -19,26 +19,26 @@ type Summary struct {
 
 var inspectCache sync.Map
 
-// Inspect reads bundle contents and local OS records only. Results are
-// cached per path for the life of the process because the scan asks twice:
-// once for the Sparkle feed, once for the updater label.
-func Inspect(ctx context.Context, path string) Summary {
+// inspectReport runs the network-free stages once per path for the life of
+// the process; the scan asks several times (Sparkle feed, updater label,
+// lookups).
+func inspectReport(ctx context.Context, path string) *Report {
 	if v, ok := inspectCache.Load(path); ok {
-		return v.(Summary)
+		return v.(*Report)
 	}
-	s := inspect(ctx, path)
-	inspectCache.Store(path, s)
-	return s
+	r, fields, err := discover(path)
+	if err == nil {
+		inspectBundle(ctx, &r, fields)
+		inspectLocal(ctx, &r, fields)
+		classify(&r, fields)
+	}
+	inspectCache.Store(path, &r)
+	return &r
 }
 
-func inspect(ctx context.Context, path string) Summary {
-	r, fields, err := discover(path)
-	if err != nil {
-		return Summary{}
-	}
-	inspectBundle(ctx, &r, fields)
-	inspectLocal(ctx, &r, fields)
-	classify(&r, fields)
+// Inspect reads bundle contents and local OS records only.
+func Inspect(ctx context.Context, path string) Summary {
+	r := *inspectReport(ctx, path)
 	s := Summary{}
 	if r.hasFamily("sparkle") {
 		s.SparkleFeed = chooseAppcast(r.Candidates)
@@ -113,6 +113,22 @@ func chooseAppcast(cs []Candidate) string {
 // SparkleFeed is the scan's fallback when Info.plist has no SUFeedURL.
 func SparkleFeed(app inventory.Application) string {
 	return Inspect(context.Background(), app.Path).SparkleFeed
+}
+
+// LookupVersions runs the keyed public lookups for one application and
+// returns them in the scan's terms. Network access; caller opts in.
+func LookupVersions(ctx context.Context, app inventory.Application) ([]inventory.LookupVerdict, []string) {
+	r := *inspectReport(ctx, app.Path)
+	r.Lookups, r.Warnings = nil, nil
+	if r.Application.Path == "" {
+		return nil, nil
+	}
+	lookups(ctx, &r)
+	var out []inventory.LookupVerdict
+	for _, l := range r.Lookups {
+		out = append(out, inventory.LookupVerdict{Source: l.Source, Version: l.Version, Comparison: l.Comparison, URL: l.URL, Note: l.Note})
+	}
+	return out, r.Warnings
 }
 
 // Updater labels an application nothing else could check.

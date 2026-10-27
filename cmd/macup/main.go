@@ -89,7 +89,9 @@ func run(args []string) int {
 		quietFlag := fs.Bool("quiet", false, "suppress scan progress messages on stderr")
 		verboseFlag := fs.Bool("verbose", false, "print per-feed Sparkle progress on stderr")
 		allFlag := fs.Bool("all", false, "show entries already known to be current (table output only)")
-		statusFlag := fs.String("status", "", "show only these statuses, comma-separated, e.g. UNCHECKED or OUTDATED,UPGRADE AVAILABLE (table output only)")
+		statusFlag := fs.String("status", "", "show only these statuses, comma-separated, e.g. 'NO SOURCE' or 'OUTDATED,UPGRADE AVAILABLE' (table output only)")
+		pathsFlag := fs.Bool("paths", false, "show bundle paths in the DETAIL column (table output only)")
+		lookupFlag := fs.Bool("lookup", false, "query public sources (App Store catalogue, Homebrew cask index, release feeds) for apps no provider evaluated (network)")
 		debugFlag := fs.Bool("sparkle-debug", false, "print Sparkle per-feed diagnostics to stderr (implies --sparkle)")
 		debugXMLDir := fs.String("sparkle-debug-xml", "", "directory for sanitized appcast XML structure samples (implies --sparkle-debug)")
 		appStoreFlag := fs.Bool("appstore", false, "scan Mac App Store software via mas")
@@ -228,10 +230,13 @@ func run(args []string) int {
 			// the App Store, a browser, a vendor agent, or their parent product.
 			inventory.ApplyUpdaters(&result, probe.Updater)
 		}
+		if useApps && *lookupFlag {
+			runLookups(context.Background(), &result, announce)
+		}
 		if *jsonOut {
 			err = output.JSON(os.Stdout, result)
 		} else {
-			opts := output.TableOptions{ShowAll: *allFlag}
+			opts := output.TableOptions{ShowAll: *allFlag, Paths: *pathsFlag}
 			if strings.TrimSpace(*statusFlag) != "" {
 				opts.Statuses = strings.Split(*statusFlag, ",")
 			}
@@ -264,6 +269,55 @@ func run(args []string) int {
 		usage()
 		return 2
 	}
+}
+
+// runLookups queries keyed public sources for entries no provider evaluated,
+// with a small worker pool, and folds the verdicts into the result.
+func runLookups(ctx context.Context, result *inventory.Result, announce func(string, ...any)) {
+	byPath := map[string]inventory.Application{}
+	for _, a := range result.Applications {
+		byPath[a.Path] = a
+	}
+	var targets []inventory.Application
+	for _, e := range result.Entries {
+		if a, ok := byPath[e.Path]; ok && inventory.LookupEligible(e) {
+			targets = append(targets, a)
+		}
+	}
+	announce("Lookup: querying App Store catalogue, Homebrew cask index and release feeds for %d applications", len(targets))
+	verdicts := map[string][]inventory.LookupVerdict{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	jobs := make(chan inventory.Application)
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for a := range jobs {
+				vs, _ := probe.LookupVersions(ctx, a)
+				mu.Lock()
+				verdicts[a.Path] = vs
+				mu.Unlock()
+			}
+		}()
+	}
+	for _, a := range targets {
+		jobs <- a
+	}
+	close(jobs)
+	wg.Wait()
+	inventory.ApplyLookups(result, verdicts)
+	var outdated, notFlagged int
+	for _, e := range result.Entries {
+		if len(e.Sources) == 2 && e.Sources[1] == "lookup" {
+			if e.Status == "OUTDATED" {
+				outdated++
+			} else {
+				notFlagged++
+			}
+		}
+	}
+	announce("Lookup: %d outdated, %d not flagged, %d without a comparable version", outdated, notFlagged, len(targets)-outdated-notFlagged)
 }
 
 // summariseOutdated phrases a package-manager result for the progress line.
@@ -389,7 +443,7 @@ func usage() {
 	fmt.Println(`macup — read-only macOS software inventory
 
 Usage:
-  macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle,adobe] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--quiet] [--verbose] [--all] [--status UNCHECKED] [--roots /Applications,/Users/me/Applications]
+  macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle,adobe] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--lookup] [--quiet] [--verbose] [--all] [--status "NO SOURCE"] [--paths] [--roots /Applications,/Users/me/Applications]
   macup probe [--lookup] [--origins] [--fetch] [--model llama3.2:latest] [--max-pages 3] /Applications/Example.app
   macup probe --all [--roots /Applications] [--include-system] [--lookup] [--origins] [--fetch] [--model MODEL] [--workers 2]
   macup doctor [--roots /Applications]

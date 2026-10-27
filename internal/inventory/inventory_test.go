@@ -107,7 +107,7 @@ func TestApplyUpdatersOnlyRelabelsUnchecked(t *testing.T) {
 	if r.Entries[1].Status != "OUTDATED" || r.Entries[1].UpdateSource != "" {
 		t.Fatalf("provider verdict overridden: %+v", r.Entries[1])
 	}
-	if r.Entries[2].Status != "UNCHECKED" {
+	if r.Entries[2].Status != "NO SOURCE" {
 		t.Fatalf("%+v", r.Entries[2])
 	}
 	r = Result{Applications: []Application{{Name: "Game", Platform: "ios", Path: "/Applications/Game.app"}}}
@@ -139,5 +139,30 @@ func TestSparkleFeedFinderFallback(t *testing.T) {
 	})
 	if len(checks.Checks) != 1 || checks.Checks[0].Status != "OUTDATED" {
 		t.Fatalf("%+v", checks)
+	}
+}
+
+func TestApplyLookupsPriority(t *testing.T) {
+	r := Result{Applications: []Application{{Name: "A", Path: "/Applications/A.app"}, {Name: "B", Path: "/Applications/B.app"}, {Name: "C", Path: "/Applications/C.app"}, {Name: "D", Path: "/Applications/D.app"}}}
+	Reconcile(&r)
+	r.Entries[2].Status = "OUTDATED"
+	r.Entries[3].Status, r.Entries[3].UpdateSource = "MANAGED", "parent"
+	ApplyLookups(&r, map[string][]LookupVerdict{
+		identityPath("/Applications/A.app"): {{Source: "github-releases", Version: "9.9", Comparison: "newer"}, {Source: "homebrew-cask", Version: "2.0", Comparison: "newer"}, {Source: "itunes", Version: "1.0", Comparison: "same"}},
+		identityPath("/Applications/B.app"): {{Source: "homebrew-cask", Version: "3.0", Comparison: "unknown"}},
+		identityPath("/Applications/C.app"): {{Source: "homebrew-cask", Version: "5.0", Comparison: "newer"}},
+		identityPath("/Applications/D.app"): {{Source: "homebrew-cask", Version: "5.0", Comparison: "newer"}},
+	})
+	if e := r.Entries[0]; e.Status != "OUTDATED" || e.Available != "2.0" || e.UpdateSource != "homebrew-cask" || len(e.Sources) != 2 {
+		t.Fatalf("catalogue should outrank a derived feed: %+v", e)
+	}
+	if e := r.Entries[1]; e.Status != "NO SOURCE" || !strings.Contains(e.Detail, "homebrew-cask lists 3.0") {
+		t.Fatalf("%+v", e)
+	}
+	if e := r.Entries[2]; e.Available != "" {
+		t.Fatalf("provider verdict touched: %+v", e)
+	}
+	if e := r.Entries[3]; e.Status != "MANAGED" {
+		t.Fatalf("helper should be skipped: %+v", e)
 	}
 }

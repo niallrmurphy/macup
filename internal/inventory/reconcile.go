@@ -28,7 +28,7 @@ func Reconcile(r *Result) {
 	byPath := make(map[string][]int)
 	for _, a := range r.Applications {
 		idx := len(entries)
-		entries = append(entries, Entry{Name: a.Name, Installed: a.Version, Status: "UNCHECKED", Sources: []string{"apps"}, Path: a.Path, BundleID: a.BundleID})
+		entries = append(entries, Entry{Name: a.Name, Installed: a.Version, Status: "NO SOURCE", Sources: []string{"apps"}, Path: a.Path, BundleID: a.BundleID})
 		key := identityPath(a.Path)
 		byPath[key] = append(byPath[key], idx)
 	}

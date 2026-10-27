@@ -42,6 +42,12 @@ func classify(r *Report, fields map[string]string) {
 		}
 	}
 	for _, f := range r.Families {
+		if strings.HasPrefix(f, "updater:") {
+			r.Management = &Management{"self", "embedded updater: " + strings.TrimPrefix(f, "updater:")}
+			return
+		}
+	}
+	for _, f := range r.Families {
 		if strings.HasPrefix(f, "launch-agent:") {
 			r.Management = &Management{"vendor", "vendor updater job " + strings.TrimPrefix(f, "launch-agent:")}
 			return

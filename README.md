@@ -23,7 +23,9 @@ go build -o macup ./cmd/macup
 ./macup scan --roots ~/Applications # custom app roots only
 ./macup scan --apps --sparkle     # opt-in Sparkle appcast HTTP requests
 ./macup scan --all               # include entries already known to be current
-./macup scan --status UNCHECKED  # only entries with these statuses (comma-separated)
+./macup scan --status "NO SOURCE" # only entries with these statuses (comma-separated)
+./macup scan --paths             # include bundle paths in the DETAIL column
+./macup scan --lookup            # public lookups for apps no provider evaluated (network)
 ./macup doctor
 ```
 
@@ -47,19 +49,35 @@ Missing tools produce warnings instead of aborting the scan.
 All selected sources are rendered in one table with the same columns. By
 default the table omits entries a provider has positively reported as
 `CURRENT` or `NOT FLAGGED`, and the footer says how many were hidden; pass
-`--all` to list everything, or `--status UNCHECKED` (comma-separated, case
-insensitive) to list only chosen statuses. JSON output always contains every
-entry.
+`--all` to list everything, or `--status "NO SOURCE"` (comma-separated, case
+insensitive) to list only chosen statuses. The `DETAIL` column carries
+provider reasons; `--paths` adds the bundle path and cask name, which doubles
+the table width. JSON output always contains every entry.
 
 Applications no provider could evaluate are labelled from local evidence
-instead of being left `UNCHECKED` wholesale. `SELF-UPDATING` means the bundle
+instead of being left `NO SOURCE` wholesale. `SELF-UPDATING` means the bundle
 carries its own updater, named in `UPDATE SOURCE` (`sparkle`, `squirrel`,
 `electron-updater`, `keystone`, `mozilla`, `paddle`, `devmate`); `MANAGED`
 means something else updates it: `appstore` (receipt present), `browser`
 (web-app shim), `parent` (helper or uninstaller), `setapp`, or
-`vendor:<launchd label>` for a vendor-wide updater job. These labels are
-read-only observations, not verdicts on currency. `UNCHECKED` remains for
-bundles with no recognisable mechanism.
+`vendor:<launchd label>` for a vendor-wide updater job. Updater frameworks
+are found however deeply a vendor nests them (Chromium-based browsers bury
+Sparkle inside their own framework; Docker wraps a Squirrel app) and a
+helper named like an updater (`BraveUpdater`, `opera_autoupdate`) counts as
+one. These labels are read-only observations, not verdicts on currency.
+`NO SOURCE` remains for bundles with no recognisable mechanism: macup found
+nothing to check, which is different from not having checked.
+
+`--lookup` goes further for anything still without a provider verdict. It
+asks the App Store catalogue by bundle identifier, the Homebrew cask index
+by app name, and release feeds derived from evidence in the bundle, and
+folds the answer in: a source listing a newer version makes the entry
+`OUTDATED` with that source named in `UPDATE SOURCE` and `lookup` added to
+`SOURCE`; a source listing the same version makes it `NOT FLAGGED`; anything
+less conclusive is noted in `DETAIL`. Catalogues outrank feeds derived from
+a repository name found in a binary. Helpers and browser web-app shims are
+skipped. This is the same machinery as `macup probe --lookup`, described
+below, and it needs the network.
 
 The Sparkle provider also uses feeds the bundle keeps outside `Info.plist`:
 set in user defaults, or compiled into a binary (VLC and Path Finder, for
@@ -72,7 +90,7 @@ bundle, reported with `"platform": "ios"` in JSON, and carry their App Store
 item identifier so they reconcile with `mas` output.
 A package `NOT FLAGGED` as outdated is **not** guaranteed to be current with
 its vendor. The plain `.app` scan has no update-checking source and uses
-`UNCHECKED`. Cask and App Store entries may also describe apps found in the
+`NO SOURCE`. Cask and App Store entries may also describe apps found in the
 filesystem; the current table keeps these as source-specific rows rather than
 making speculative identity matches.
 

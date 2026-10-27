@@ -31,7 +31,7 @@ func TestMicrosoftScanAndApply(t *testing.T) {
 	if !result.Available || len(result.Updates) != 2 {
 		t.Fatalf("bad result: %+v", result)
 	}
-	r := Result{Microsoft: &result, Entries: []Entry{{Name: "Microsoft Word", Path: "/Applications/Microsoft Word.app", Installed: "16.114.1", Status: "UNCHECKED", Sources: []string{"apps"}}}}
+	r := Result{Microsoft: &result, Entries: []Entry{{Name: "Microsoft Word", Path: "/Applications/Microsoft Word.app", Installed: "16.114.1", Status: "NO SOURCE", Sources: []string{"apps"}}}}
 	ApplyMicrosoft(&r)
 	if len(r.Entries) != 2 || r.Entries[0].Status != "OUTDATED" || r.Entries[0].UpdateSource != "microsoft-autoupdate" {
 		t.Fatalf("bad entries: %+v", r.Entries)
@@ -85,7 +85,7 @@ func TestMicrosoftProviderCheckStates(t *testing.T) {
 	if noUpdates.CheckStatus != "checked" || noUpdates.ResponseFormat != "text" || !noUpdates.Available {
 		t.Fatalf("unexpected no-updates: %+v", noUpdates)
 	}
-	r := Result{Microsoft: &noUpdates, Entries: []Entry{{Name: "Microsoft Word", Status: "UNCHECKED", Sources: []string{"apps"}, Path: "/Applications/Microsoft Word.app"}}}
+	r := Result{Microsoft: &noUpdates, Entries: []Entry{{Name: "Microsoft Word", Status: "NO SOURCE", Sources: []string{"apps"}, Path: "/Applications/Microsoft Word.app"}}}
 	ApplyMicrosoft(&r)
 	if r.Entries[0].Status != "CURRENT" {
 		t.Fatalf("MAU zero updates should mark core Office current: %+v", r.Entries[0])
@@ -103,17 +103,17 @@ func TestMicrosoftProviderCheckStates(t *testing.T) {
 func TestMicrosoftCurrentCoverage(t *testing.T) {
 	m := MicrosoftResult{Available: true, CheckStatus: "checked"}
 	r := Result{Microsoft: &m, Entries: []Entry{
-		{Name: "Microsoft Word", BundleID: "com.microsoft.Word", Path: "/Applications/Microsoft Word.app", Status: "UNCHECKED", Sources: []string{"apps"}},
-		{Name: "Microsoft Teams", Path: "/Applications/Microsoft Teams.app", Status: "UNCHECKED", Sources: []string{"apps"}},
-		{Name: "Microsoft Edge", Path: "/Applications/Microsoft Edge.app", Status: "UNCHECKED", Sources: []string{"apps"}},
-		{Name: "Microsoft Word", BundleID: "org.example.Word", Path: "/Applications/fake.app", Status: "UNCHECKED", Sources: []string{"apps"}},
+		{Name: "Microsoft Word", BundleID: "com.microsoft.Word", Path: "/Applications/Microsoft Word.app", Status: "NO SOURCE", Sources: []string{"apps"}},
+		{Name: "Microsoft Teams", Path: "/Applications/Microsoft Teams.app", Status: "NO SOURCE", Sources: []string{"apps"}},
+		{Name: "Microsoft Edge", Path: "/Applications/Microsoft Edge.app", Status: "NO SOURCE", Sources: []string{"apps"}},
+		{Name: "Microsoft Word", BundleID: "org.example.Word", Path: "/Applications/fake.app", Status: "NO SOURCE", Sources: []string{"apps"}},
 	}}
 	ApplyMicrosoft(&r)
 	if r.Entries[0].Status != "CURRENT" || r.Entries[0].UpdateSource != "microsoft-autoupdate" {
 		t.Fatalf("Office not checked: %+v", r.Entries[0])
 	}
 	for _, e := range r.Entries[1:] {
-		if e.Status != "UNCHECKED" {
+		if e.Status != "NO SOURCE" {
 			t.Fatalf("out-of-scope marked current: %+v", e)
 		}
 	}
