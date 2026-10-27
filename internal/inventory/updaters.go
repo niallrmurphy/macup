@@ -14,6 +14,7 @@ var SparkleFeedFinder func(Application) string
 type UpdaterInfo struct {
 	Status string // SELF-UPDATING or MANAGED
 	Source string // mechanism or manager, shown in the UPDATE SOURCE column
+	Detail string // optional evidence, such as the update endpoint found
 }
 
 // ApplyUpdaters relabels UNCHECKED application entries whose bundle carries
@@ -46,6 +47,9 @@ func ApplyUpdaters(r *Result, find func(Application) UpdaterInfo) {
 		}
 		e.Status = u.Status
 		e.UpdateSource = u.Source
+		if u.Detail != "" {
+			e.Detail = u.Detail
+		}
 	}
 }
 

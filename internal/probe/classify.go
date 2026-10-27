@@ -53,6 +53,27 @@ func classify(r *Report, fields map[string]string) {
 			return
 		}
 	}
+	// No framework or helper, but the vendor's own update endpoint is compiled
+	// into the app (Spotify's desktop-update service). An app that carries its
+	// vendor's update URL in its binary uses it.
+	if u := updateEndpoint(r); u != "" {
+		r.Management = &Management{"self", "embedded updater: endpoint " + u}
+	}
+}
+
+var endpointWord = regexp.MustCompile(`(?i)update`)
+
+func updateEndpoint(r *Report) string {
+	tokens := affinityTokens(r)
+	for _, c := range r.Candidates {
+		if c.Score < 80 || (c.Source != "executable" && !strings.HasPrefix(c.Source, "binary:")) {
+			continue
+		}
+		if hasAffinity(c.URL, tokens) && endpointWord.MatchString(c.URL) {
+			return c.URL
+		}
+	}
+	return ""
 }
 
 func hasPrefixAny(s string, prefixes []string) bool {

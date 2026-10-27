@@ -279,8 +279,19 @@ func forgeRepo(raw string) (host, owner, repo string, ok bool) {
 func forgeTrusted(c Candidate, tokens []string) bool {
 	switch {
 	case c.Source == "executable", strings.HasPrefix(c.Source, "binary:"):
-		// Binaries embed URLs of every dependency they link; the repo must name the product.
-		return hasAffinity(c.URL, tokens)
+		// Binaries embed URLs of every dependency they link, including the
+		// vendor's other projects (spotify/save-to-spotify). The repository
+		// name itself must be the product, not merely mention the vendor.
+		_, _, repo, ok := forgeRepo(c.URL)
+		if !ok {
+			return false
+		}
+		for _, t := range tokens {
+			if strings.Contains(t, squash(repo)) {
+				return true
+			}
+		}
+		return false
 	case strings.HasPrefix(c.Source, "lookup:"):
 		return false
 	case strings.HasPrefix(c.Source, "Info.plist:"):
@@ -504,7 +515,10 @@ func scanExecutableURLs(path string, max int) ([]Candidate, error) {
 			end++
 		}
 		u := "h" + string(rest[:end])
-		if end < 12 || seen[u] || !updateKeywords.MatchString(u) {
+		if i := strings.Index(u[len("https://"):], ":"); i >= 0 {
+			u = u[:len("https://")+i]
+		}
+		if len(u) < 12 || seen[u] || !updateKeywords.MatchString(u) {
 			continue
 		}
 		seen[u] = true

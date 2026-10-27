@@ -135,6 +135,8 @@ func LookupVersions(ctx context.Context, app inventory.Application) ([]inventory
 func Updater(app inventory.Application) inventory.UpdaterInfo {
 	s := Inspect(context.Background(), app.Path)
 	switch {
+	case strings.HasPrefix(s.Updater, "endpoint "):
+		return inventory.UpdaterInfo{Status: "SELF-UPDATING", Source: "endpoint", Detail: strings.TrimPrefix(s.Updater, "endpoint ")}
 	case s.Updater != "":
 		return inventory.UpdaterInfo{Status: "SELF-UPDATING", Source: s.Updater}
 	case s.ManagedBy != "":

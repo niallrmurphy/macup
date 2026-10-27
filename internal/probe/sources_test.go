@@ -64,6 +64,7 @@ func TestForgeFeedsOnlyFromTrustedSources(t *testing.T) {
 	add(&r, "https://github.com/dep/lib", "executable", 55)
 	add(&r, "https://github.com/dep/other-lib", "binary:libfoo.dylib", 35)
 	add(&r, "https://api.github.com/repos/acme/widgetapp/releases/latest", "binary:bundle.js", 80)
+	add(&r, "https://github.com/widgetapp/save-to-widgetapp", "binary:other.js", 80)
 	add(&r, "https://gitlab.com/inkscape/inkscape", "Info.plist:CIProjectUrl", 65)
 	for _, c := range append([]Candidate{}, r.Candidates...) {
 		if forgeTrusted(c, []string{"widgetapp"}) {
@@ -77,7 +78,7 @@ func TestForgeFeedsOnlyFromTrustedSources(t *testing.T) {
 	if !urls["https://github.com/acme/widget/releases.atom"] || !urls["https://gitlab.com/inkscape/inkscape/-/tags?format=atom"] || !urls["https://github.com/acme/widgetapp/releases.atom"] {
 		t.Fatalf("%+v", r.Candidates)
 	}
-	if urls["https://github.com/dep/lib/releases.atom"] || urls["https://github.com/sponsors/x/releases.atom"] || urls["https://github.com/dep/other-lib/releases.atom"] {
+	if urls["https://github.com/dep/lib/releases.atom"] || urls["https://github.com/sponsors/x/releases.atom"] || urls["https://github.com/dep/other-lib/releases.atom"] || urls["https://github.com/widgetapp/save-to-widgetapp/releases.atom"] {
 		t.Fatalf("untrusted feed derived: %+v", r.Candidates)
 	}
 }
@@ -103,7 +104,7 @@ func TestMozillaUpdateURL(t *testing.T) {
 
 func TestScanExecutableURLs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bin")
-	blob := append([]byte{0, 1, 2}, []byte("junk https://get.example.com/appcast.xml\x00more https://example.com/privacy\x00https://cdn.example.com/%@/update\x00https://example.com/download/v2")...)
+	blob := append([]byte{0, 1, 2}, []byte("junk https://get.example.com/appcast.xml\x00more https://example.com/privacy\x00https://cdn.example.com/%@/update\x00https://example.com/download/v2reflect:")...)
 	if err := os.WriteFile(path, blob, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +112,7 @@ func TestScanExecutableURLs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].URL != "https://get.example.com/appcast.xml" || got[1].URL != "https://example.com/download/v2" {
+	if len(got) != 2 || got[0].URL != "https://get.example.com/appcast.xml" || got[1].URL != "https://example.com/download/v2reflect" {
 		t.Fatalf("%+v", got)
 	}
 	tokens := []string{"example"}
@@ -341,6 +342,18 @@ func TestClassify(t *testing.T) {
 	classify(&r, nil)
 	if r.Management != nil {
 		t.Fatalf("%+v", r.Management)
+	}
+	r = app("Spotify", "com.spotify.client", "/Applications/Spotify.app")
+	add(&r, "https://spclient.wg.spotify.com/desktop-update/v2/update", "executable", 80)
+	classify(&r, nil)
+	if r.Management == nil || r.Management.Kind != "self" || r.Management.Detail != "embedded updater: endpoint https://spclient.wg.spotify.com/desktop-update/v2/update" {
+		t.Fatalf("%+v", r.Management)
+	}
+	r = app("Other", "org.example.other", "/Applications/Other.app")
+	add(&r, "https://cdn.vendor.test/autoupdate/table.xml", "binary:plugin", 60)
+	classify(&r, nil)
+	if r.Management != nil {
+		t.Fatalf("endpoint without affinity must not count: %+v", r.Management)
 	}
 }
 
