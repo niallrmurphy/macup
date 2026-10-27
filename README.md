@@ -26,6 +26,8 @@ go build -o macup ./cmd/macup
 ./macup scan --status "NO SOURCE" # only entries with these statuses (comma-separated)
 ./macup scan --paths             # include bundle paths in the DETAIL column
 ./macup scan --lookup            # public lookups for apps no provider evaluated (network)
+./macup scan --fresh             # ignore cached provider results this run
+./macup scan --cache-ttl 10m     # reuse provider results younger than ten minutes
 ./macup doctor
 ```
 
@@ -174,6 +176,19 @@ updates, update feed overrides and signature validation are not implemented.
 parsed feed; it is **not** proof of being fully up-to-date. No archives are
 downloaded or installed. Feed URLs in applications should be treated as
 untrusted, especially on untrusted machines.
+
+### Result cache
+
+Network providers dominate scan time. Their results are cached under
+`~/Library/Caches/macup/results` and reused for one hour by default
+(`--cache-ttl`, `0` disables). Keys include whatever must invalidate an
+entry: Sparkle checks and lookups are keyed by bundle path plus installed
+version and build, so an app that was updated is re-checked immediately
+regardless of age; the Microsoft and Adobe results are keyed by the
+installed versions of every app of that vendor. `--fresh` ignores cached
+results for one run while still storing new ones. Homebrew, the App Store
+and the local inventory are never cached: they are quick, and they are what
+you check after acting.
 
 ### Scan progress
 

@@ -71,3 +71,18 @@ func TestProgressSummaries(t *testing.T) {
 		t.Fatal("outdated counts")
 	}
 }
+
+func TestCacheKeys(t *testing.T) {
+	a := inventory.Application{Path: "/Applications/A.app", Version: "1.0", Build: "10", BundleID: "com.microsoft.Word"}
+	b := a
+	b.Build = "11"
+	if sparkleKey(a) == sparkleKey(b) || lookupKey(a) == lookupKey(b) {
+		t.Fatal("build change must change the key")
+	}
+	k1 := versionsKey([]inventory.Application{a, {BundleID: "org.other", Version: "9"}}, "com.microsoft.")
+	k2 := versionsKey([]inventory.Application{b}, "com.microsoft.")
+	k3 := versionsKey([]inventory.Application{a, {BundleID: "org.other", Version: "10"}}, "com.microsoft.")
+	if k1 == k2 || k1 != k3 {
+		t.Fatal(k1, k2, k3)
+	}
+}
