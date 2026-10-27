@@ -86,3 +86,19 @@ func TestTableHidesCurrentByDefault(t *testing.T) {
 		t.Fatal(s)
 	}
 }
+
+func TestTableStatusFilter(t *testing.T) {
+	r := inventory.Result{Entries: []inventory.Entry{
+		{Name: "Stale", Status: "OUTDATED", Sources: []string{"apps"}},
+		{Name: "Fine", Status: "CURRENT", Sources: []string{"apps"}},
+		{Name: "Mystery", Status: "UNCHECKED", Sources: []string{"apps"}},
+	}}
+	var b bytes.Buffer
+	if err := TableWith(&b, r, TableOptions{Statuses: []string{"unchecked", " current"}}); err != nil {
+		t.Fatal(err)
+	}
+	s := b.String()
+	if strings.Contains(s, "Stale") || !strings.Contains(s, "Fine") || !strings.Contains(s, "Mystery") || !strings.Contains(s, "2 entries shown with status UNCHECKED, CURRENT; 1 hidden") {
+		t.Fatal(s)
+	}
+}

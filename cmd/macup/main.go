@@ -89,6 +89,7 @@ func run(args []string) int {
 		quietFlag := fs.Bool("quiet", false, "suppress scan progress messages on stderr")
 		verboseFlag := fs.Bool("verbose", false, "print per-feed Sparkle progress on stderr")
 		allFlag := fs.Bool("all", false, "show entries already known to be current (table output only)")
+		statusFlag := fs.String("status", "", "show only these statuses, comma-separated, e.g. UNCHECKED or OUTDATED,UPGRADE AVAILABLE (table output only)")
 		debugFlag := fs.Bool("sparkle-debug", false, "print Sparkle per-feed diagnostics to stderr (implies --sparkle)")
 		debugXMLDir := fs.String("sparkle-debug-xml", "", "directory for sanitized appcast XML structure samples (implies --sparkle-debug)")
 		appStoreFlag := fs.Bool("appstore", false, "scan Mac App Store software via mas")
@@ -230,7 +231,11 @@ func run(args []string) int {
 		if *jsonOut {
 			err = output.JSON(os.Stdout, result)
 		} else {
-			err = output.TableWith(os.Stdout, result, output.TableOptions{ShowAll: *allFlag})
+			opts := output.TableOptions{ShowAll: *allFlag}
+			if strings.TrimSpace(*statusFlag) != "" {
+				opts.Statuses = strings.Split(*statusFlag, ",")
+			}
+			err = output.TableWith(os.Stdout, result, opts)
 		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -384,7 +389,7 @@ func usage() {
 	fmt.Println(`macup — read-only macOS software inventory
 
 Usage:
-  macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle,adobe] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--quiet] [--verbose] [--all] [--roots /Applications,/Users/me/Applications]
+  macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle,adobe] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--quiet] [--verbose] [--all] [--status UNCHECKED] [--roots /Applications,/Users/me/Applications]
   macup probe [--lookup] [--origins] [--fetch] [--model llama3.2:latest] [--max-pages 3] /Applications/Example.app
   macup probe --all [--roots /Applications] [--include-system] [--lookup] [--origins] [--fetch] [--model MODEL] [--workers 2]
   macup doctor [--roots /Applications]

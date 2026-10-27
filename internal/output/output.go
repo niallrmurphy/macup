@@ -24,6 +24,21 @@ type TableOptions struct {
 	// ShowAll includes entries already known to be current. By default the
 	// table lists only entries that may need attention.
 	ShowAll bool
+	// Statuses, when non-empty, restricts the table to these statuses
+	// (case-insensitive) and takes precedence over ShowAll.
+	Statuses []string
+}
+
+func (o TableOptions) keep(status string) bool {
+	if len(o.Statuses) > 0 {
+		for _, want := range o.Statuses {
+			if strings.EqualFold(strings.TrimSpace(want), status) {
+				return true
+			}
+		}
+		return false
+	}
+	return o.ShowAll || !currentStatus(status)
 }
 
 // Table presents every entry from all requested inventory sources.
@@ -45,7 +60,7 @@ func TableWith(w io.Writer, r inventory.Result, opts TableOptions) error {
 	rows := make([]row, 0, len(r.Entries))
 	hidden := 0
 	for _, e := range r.Entries {
-		if !opts.ShowAll && currentStatus(e.Status) {
+		if !opts.keep(e.Status) {
 			hidden++
 			continue
 		}
@@ -76,7 +91,11 @@ func TableWith(w io.Writer, r inventory.Result, opts TableOptions) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	if hidden > 0 {
+	if len(opts.Statuses) > 0 {
+		if _, err := fmt.Fprintf(w, "\n%d entries shown with status %s; %d hidden\n", len(rows), strings.ToUpper(strings.Join(opts.Statuses, ",")), hidden); err != nil {
+			return err
+		}
+	} else if hidden > 0 {
 		if _, err := fmt.Fprintf(w, "\n%d entries shown; %d current entries hidden (use --all to show)\n", len(rows), hidden); err != nil {
 			return err
 		}

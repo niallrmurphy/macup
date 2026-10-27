@@ -32,6 +32,10 @@ func ApplyUpdaters(r *Result, find func(Application) UpdaterInfo) {
 			continue
 		}
 		u := find(a)
+		if a.Platform == "ios" {
+			// iPhone and iPad apps on Apple silicon are installed and updated only by the App Store.
+			u = UpdaterInfo{Status: "MANAGED", Source: "appstore"}
+		}
 		if u.Status == "" {
 			continue
 		}

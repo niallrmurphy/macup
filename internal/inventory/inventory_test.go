@@ -110,6 +110,12 @@ func TestApplyUpdatersOnlyRelabelsUnchecked(t *testing.T) {
 	if r.Entries[2].Status != "UNCHECKED" {
 		t.Fatalf("%+v", r.Entries[2])
 	}
+	r = Result{Applications: []Application{{Name: "Game", Platform: "ios", Path: "/Applications/Game.app"}}}
+	Reconcile(&r)
+	ApplyUpdaters(&r, func(Application) UpdaterInfo { return UpdaterInfo{} })
+	if r.Entries[0].Status != "MANAGED" || r.Entries[0].UpdateSource != "appstore" {
+		t.Fatalf("iOS wrapper should be App Store managed: %+v", r.Entries[0])
+	}
 }
 
 func TestSparkleFeedFinderFallback(t *testing.T) {

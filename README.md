@@ -23,6 +23,7 @@ go build -o macup ./cmd/macup
 ./macup scan --roots ~/Applications # custom app roots only
 ./macup scan --apps --sparkle     # opt-in Sparkle appcast HTTP requests
 ./macup scan --all               # include entries already known to be current
+./macup scan --status UNCHECKED  # only entries with these statuses (comma-separated)
 ./macup doctor
 ```
 
@@ -46,7 +47,9 @@ Missing tools produce warnings instead of aborting the scan.
 All selected sources are rendered in one table with the same columns. By
 default the table omits entries a provider has positively reported as
 `CURRENT` or `NOT FLAGGED`, and the footer says how many were hidden; pass
-`--all` to list everything. JSON output always contains every entry.
+`--all` to list everything, or `--status UNCHECKED` (comma-separated, case
+insensitive) to list only chosen statuses. JSON output always contains every
+entry.
 
 Applications no provider could evaluate are labelled from local evidence
 instead of being left `UNCHECKED` wholesale. `SELF-UPDATING` means the bundle
