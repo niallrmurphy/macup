@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/niallrmurphy/macup/internal/diagnostics"
 	"github.com/niallrmurphy/macup/internal/inventory"
 	"github.com/niallrmurphy/macup/internal/output"
+	"github.com/niallrmurphy/macup/internal/probe"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,6 +22,72 @@ func run(args []string) int {
 		return 0
 	}
 	switch args[0] {
+	case "probe":
+		fs := flag.NewFlagSet("probe", flag.ContinueOnError)
+		fetch := fs.Bool("fetch", false, "fetch up to three candidate public HTTPS pages per app")
+		lookup := fs.Bool("lookup", false, "query keyed public sources: App Store catalogue, Homebrew cask index, release feeds")
+		origins := fs.Bool("origins", false, "read local download-origin records (quarantine database, Spotlight where-froms)")
+		search := fs.String("search", "", "last-resort search backend, used only when all other sources are empty: brave (requires BRAVE_SEARCH_API_KEY)")
+		model := fs.String("model", "", "optional local Ollama model (requires --fetch)")
+		pages := fs.Int("max-pages", 3, "maximum pages per app (1 to 3)")
+		all := fs.Bool("all", false, "probe every discovered application")
+		roots := fs.String("roots", "", "comma-separated application roots (requires --all)")
+		includeSystem := fs.Bool("include-system", false, "include macOS-managed apps (requires --all)")
+		workers := fs.Int("workers", 2, "concurrent app probes in --all mode (1 to 4)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *pages < 1 || *pages > 3 || *workers < 1 || *workers > 4 {
+			fmt.Fprintln(os.Stderr, "--max-pages must be 1..3; --workers must be 1..4")
+			return 2
+		}
+		if *model != "" && !*fetch {
+			fmt.Fprintln(os.Stderr, "--model requires --fetch")
+			return 2
+		}
+		if *search != "" && *search != "brave" {
+			fmt.Fprintln(os.Stderr, "--search must be brave")
+			return 2
+		}
+		if *search == "brave" && os.Getenv("BRAVE_SEARCH_API_KEY") == "" {
+			fmt.Fprintln(os.Stderr, "--search=brave requires BRAVE_SEARCH_API_KEY")
+			return 2
+		}
+		opt := probe.Options{Search: *search, Fetch: *fetch, Lookup: *lookup, Origins: *origins, Model: *model, MaxPages: *pages}
+		if *all {
+			if fs.NArg() != 0 {
+				fmt.Fprintln(os.Stderr, "--all cannot be combined with an application path")
+				return 2
+			}
+			result := inventory.Scan(context.Background(), selectedRoots(*roots))
+			if !*includeSystem {
+				result.Applications = inventory.FilterSystemApplications(result.Applications)
+			}
+			batch := runProbeBatch(context.Background(), result.Applications, result.Warnings, opt, *workers)
+			e := json.NewEncoder(os.Stdout)
+			e.SetIndent("", "  ")
+			if err := e.Encode(batch); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			return 0
+		}
+		if fs.NArg() != 1 || *roots != "" || *includeSystem {
+			fmt.Fprintln(os.Stderr, "usage: macup probe [--all [--roots DIRS] [--include-system]] [--lookup] [--origins] [--fetch] [--search brave] [--model MODEL] [--max-pages 1..3] [--workers 1..4] [APP.app]")
+			return 2
+		}
+		r, err := probe.Run(context.Background(), fs.Arg(0), opt)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "probe:", err)
+			return 1
+		}
+		e := json.NewEncoder(os.Stdout)
+		e.SetIndent("", "  ")
+		if err := e.Encode(r); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
 	case "scan":
 		fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 		jsonOut := fs.Bool("json", false, "print machine-readable JSON")
@@ -186,6 +255,58 @@ func printSparkleDiagnostics(w *os.File, c inventory.SparkleCheck) {
 	}
 }
 
+// ProbeItem retains per-application errors without aborting the whole inventory.
+type ProbeItem struct {
+	Path   string        `json:"path"`
+	Report *probe.Report `json:"report,omitempty"`
+	Error  string        `json:"error,omitempty"`
+}
+type ProbeBatch struct {
+	Total     int                 `json:"total"`
+	Succeeded int                 `json:"succeeded"`
+	Failed    int                 `json:"failed"`
+	Warnings  []inventory.Warning `json:"inventory_warnings"`
+	Results   []ProbeItem         `json:"results"`
+}
+
+func runProbeBatch(ctx context.Context, apps []inventory.Application, warnings []inventory.Warning, opt probe.Options, workers int) ProbeBatch {
+	batch := ProbeBatch{Total: len(apps), Warnings: warnings, Results: make([]ProbeItem, len(apps))}
+	// A small bounded pool prevents hundreds of simultaneous HTTP/Ollama requests.
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				app := apps[i]
+				r, err := probe.Run(ctx, app.Path, opt)
+				item := ProbeItem{Path: app.Path}
+				if err != nil {
+					item.Error = err.Error()
+				} else {
+					item.Report = &r
+				}
+				batch.Results[i] = item
+			}
+		}()
+	}
+	for i := range apps {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	for _, item := range batch.Results {
+		if item.Error != "" {
+			batch.Failed++
+		} else {
+			batch.Succeeded++
+		}
+	}
+	fmt.Fprintf(os.Stderr, "Probe: %d applications; %d succeeded, %d failed\n", batch.Total, batch.Succeeded, batch.Failed)
+	return batch
+}
+
 func selectedRoots(s string) []string {
 	if strings.TrimSpace(s) == "" {
 		return inventory.DefaultRoots()
@@ -203,6 +324,8 @@ func usage() {
 
 Usage:
   macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle,adobe] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--quiet] [--roots /Applications,/Users/me/Applications]
+  macup probe [--lookup] [--origins] [--fetch] [--model llama3.2:latest] [--max-pages 3] /Applications/Example.app
+  macup probe --all [--roots /Applications] [--include-system] [--lookup] [--origins] [--fetch] [--model MODEL] [--workers 2]
   macup doctor [--roots /Applications]
   macup help
 

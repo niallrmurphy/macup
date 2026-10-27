@@ -226,3 +226,112 @@ install offers: eligibility, license, rollout, OS minimum and policy may differ.
 `CURRENT` is deliberately not inferred from a catalogue entry alone. An
 unrecognised schema, missing local product identity or failed fetch cannot be
 used as evidence that an application is up to date.
+
+### Experimental long-tail probe
+
+`macup probe` is an **experimental**, independent discovery tool. It does **not**
+modify the statuses produced by `macup scan`, and does not execute application
+updaters or install anything. Its JSON is evidence for human review, not an
+assertion that an update is applicable.
+
+```sh
+./macup probe "/Applications/Nisus Writer Pro.app"                  # local evidence only, no network
+./macup probe --lookup "/Applications/Signal.app"                    # plus keyed public lookups
+./macup probe --lookup --origins /Applications/OSCAR.app             # plus local download-origin records
+./macup probe --fetch "/Applications/Nisus Writer Pro.app"          # bounded HTTPS page retrieval
+./macup probe --fetch --model llama3.2:latest "/Applications/Nisus Writer Pro.app"
+```
+
+Evidence is gathered in order of cost and trust. Each stage only runs when
+its flag is set, except the first two, which are local and read-only:
+
+1. **Bundle contents.** `Info.plist` URL values; updater frameworks
+   (`families`: Sparkle, Squirrel, Keystone, Setapp, Paddle, DevMate, Electron);
+   electron-updater's `app-update.yml`; `package.json` inside `app.asar`
+   (homepage, repository, publish targets); Mozilla's `application.ini`
+   update template; and a bounded scan of the main executable for literal
+   update-flavoured HTTPS URLs. Nothing in the bundle is executed.
+2. **Local OS records.** The app's own preferences (`SUFeedURL` set at run
+   time), vendor updater jobs in `/Library/LaunchAgents` and
+   `/Library/LaunchDaemons`, and the code signature (`signer`, `team_id`).
+3. **Classification** (`management`). Who updates the bundle: `appstore`
+   (receipt or App Store signature), `pwa` (browser web-app shim), `helper`
+   (uninstaller, helper, nested background agent), `setapp`, `vendor` (a
+   vendor-wide updater job exists), or `self` (an embedded updater family was
+   found). Absent when nothing is known.
+4. **`--origins`.** Where macOS recorded the download: Spotlight
+   `kMDItemWhereFroms` on the bundle and the LaunchServices quarantine
+   database, joined by the quarantine event UUID when the bundle still carries
+   it, otherwise by download filename. These records are a browsing history,
+   so this stage is opt-in and the matched URLs are reported under `origins`.
+5. **`--lookup`.** Keyed public queries that need no maintained database: the
+   iTunes Search API by bundle identifier; the Homebrew cask index
+   (`formulae.brew.sh/api/cask.json`, cached under `~/Library/Caches/macup`
+   for a day) matched by app filename with bundle identifier as tie-breaker;
+   and feeds derived from evidence already found (GitHub releases, GitLab
+   tags, SourceForge files, Sparkle appcasts, electron-updater `latest-mac.yml`,
+   Mozilla update server). Each produces a `lookups` entry with `comparison`
+   of `newer`, `same`, `older`, `unknown` (numbering schemes differ), or
+   `none-offered` (the vendor's update server answered with no update for this
+   exact build).
+6. **`--search=brave`** runs last and only when every stage above produced
+   nothing usable: no candidate scored 80 or higher, no versioned lookup, and
+   the bundle is not App Store, web-app, helper, or Setapp managed.
+7. **`--fetch`** and **`--model`** interpret candidate pages, as below.
+
+A `newer` lookup is a strong hint, not a verdict: App Store and Homebrew may
+lag or lead the vendor's direct channel, and a GitHub feed may list a build
+for a different platform. Pre-release tags are skipped in forge feeds.
+
+The model option calls only `http://127.0.0.1:11434/api/generate` (Ollama must
+already be running); no model is downloaded automatically. HTTP fetching is
+opt-in; redirects are disabled, private/loopback destinations are blocked,
+responses are capped at 512 KiB, and at most three pages are fetched.
+Some apps will produce zero candidates, and JS-rendered
+release pages may yield little text. `llm.verified` means an exact quoted
+passage and the proposed version appear together in retrieved text, **not**
+that update eligibility or product identity has been independently established.
+Never treat a zero-result probe as evidence the installed app is current.
+
+### Experimental whole-inventory probe
+
+`macup probe --all` enumerates the standard application roots using the same
+scanner as `scan`, excluding system-volume apps unless `--include-system` is
+set. It emits a single JSON object with `total`, `succeeded`, `failed`,
+`inventory_warnings`, and an ordered `results` array. Each result contains
+its application `path` and either its `report` or an `error`. One broken app
+does not abort the batch. The summary is printed to stderr.
+
+```sh
+macup probe --all > probe-results.json
+macup probe --all --lookup --origins --workers 4 > probe-results.json
+macup probe --all --roots /Applications --fetch > probe-results.json
+macup probe --all --fetch --model llama3.2:latest --workers 2 > probe-results.json
+```
+
+Network fetching and Ollama remain explicit opt-ins. `--workers` is bounded
+to 1–4, and `--max-pages` to 1–3 per app. Even at those limits, a full
+Ollama-backed run can take substantial time and make many HTTPS requests.
+The probe never alters `scan` statuses or installs anything.
+
+### Optional search-led discovery (experimental)
+
+`probe --search=brave` uses the Brave Web Search API to find candidate release
+and download pages. It is the last resort: it runs only when no stage above
+found a strong candidate, a versioned lookup, or a managing party.
+It is separate from `scan`, and does not treat search snippets as evidence of
+an available update. Up to five search-result URLs are recorded with source
+`search:brave`; `--fetch` must be explicitly enabled to inspect those pages.
+Results remain unverified until corroborated against the actual publisher and
+version information. The API key is read only from `BRAVE_SEARCH_API_KEY`.
+
+```sh
+export BRAVE_SEARCH_API_KEY='your-key'
+./macup probe --all --search=brave --fetch --workers 1 > probe-search-results.json
+./macup probe --search=brave --fetch --model llama3.2:latest '/Applications/Nisus Writer Pro.app'
+```
+
+Search is **opt-in**, sends app display names as search queries to Brave, and
+can incur API charges. It may produce approximately one search request for
+each app without a strong embedded update URL. Review the resulting candidate
+URLs before trusting any LLM interpretation.
