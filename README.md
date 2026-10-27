@@ -1,6 +1,6 @@
 # macup
 
-A small, **read-only**, CLI-first macOS application inventory tool written in Go. An early milestone toward an open-source application update checker.
+A small, CLI-first macOS application inventory and update checker written in Go. `macup scan` is **read-only**; `macup update` changes nothing until you pass `--yes`, and even then only hands work to the package manager that owns the software or downloads a signature-verified update for you to open.
 
 **Current functionality:** find `.app` bundles, read `Contents/Info.plist`, and output an inventory as a table or JSON, with update status from Homebrew, the App Store, Sparkle appcasts, Microsoft AutoUpdate, the Adobe catalogue, and public lookups for everything else. It does not assess CVEs or install anything. A default scan contacts vendors and catalogues; `macup scan --offline` guarantees that nothing leaves the machine (see [What leaves the machine](#what-leaves-the-machine)).
 
@@ -134,7 +134,7 @@ The core inventory parser and scanner tests can run on Linux, but testing on a M
 3. Sparkle appcast support (conservative; on by default, `--providers` controls it).
 4. App Store inventory via `mas` (implemented); caching, error reporting, end-to-end macOS CI remain future work.
 
-The planned `macup outdated` and `macup audit` commands **do not exist yet**.
+`macup update` exists (see below); `macup audit` does not.
 
 ## License
 
@@ -180,6 +180,46 @@ parsed feed; it is **not** proof of being fully up-to-date. No archives are
 downloaded or installed. Feed URLs in applications should be treated as
 untrusted, especially on untrusted machines.
 
+## Updating
+
+```sh
+./macup update                      # print the plan; nothing runs
+./macup update --only slack,iterm   # limit the plan by name
+./macup update --yes                # execute the plan
+./macup update --fetch-only         # download and verify Sparkle updates only
+```
+
+`macup update` runs the same scan as `macup scan`, then maps every
+`OUTDATED` entry to the most trustworthy route and prints the plan. Nothing
+runs without `--yes`.
+
+| Route | What runs | Who does the install |
+|---|---|---|
+| `brew` | `brew upgrade --formula NAME` or `--cask TOKEN` | Homebrew |
+| `mas` | `mas upgrade ID` | the App Store |
+| `msupdate` | Microsoft AutoUpdate's `msupdate --install --apps ID` | Microsoft AutoUpdate |
+| `sparkle-fetch` | downloads the appcast enclosure, verifies it, opens it | you, from the opened disk image or archive |
+| `manual` | nothing; the ACTION column says where to go | you |
+
+The Sparkle route never replaces an application bundle: Sparkle's own
+installer handles running apps, helpers, launch agents and permissions, and
+reimplementing that is how installs get broken. Instead the enclosure is
+downloaded to `~/Library/Caches/macup/downloads`, its size is checked against
+the appcast, and its **EdDSA signature is verified with the application's own
+`SUPublicEDKey`** before the file is written. An enclosure without a signature,
+or an app without a public key, is skipped unless `--allow-unverified` is
+given, and is then labelled `UNVERIFIED`. Downloads carry a quarantine flag so
+Gatekeeper treats them like any other download. `--fetch-only` stops after
+staging. Every executed or failed action is appended to
+`~/Library/Caches/macup/update.log`.
+
+Apps whose newer version came only from a catalogue (`homebrew-cask`,
+`itunes`) or a derived feed get a `manual` route: macup has a version number
+but no vendor-signed artefact to fetch. For a cask that is not yet installed
+through Homebrew, `brew install --cask --adopt TOKEN` may bring it under
+Homebrew for future upgrades. Adobe and other vendor-managed apps are routed
+to their own updater.
+
 ## What leaves the machine
 
 macup is read-only, but a default scan does talk to the network, because
@@ -198,6 +238,7 @@ contacts, so you can choose a mode you are comfortable with.
 | Lookup: Homebrew cask index | formulae.brew.sh | a download of the public index; matching happens locally |
 | Lookup: derived feeds and generic endpoints | GitHub, GitLab, SourceForge, or the vendor named in the bundle | the request itself |
 | Result cache | nothing | nothing; stored under `~/Library/Caches/macup` |
+| `macup update --yes` | Homebrew, Apple, Microsoft, and each Sparkle app's enclosure host | whatever those managers send; Sparkle downloads are plain fetches |
 
 Modes:
 

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -88,4 +89,10 @@ func parsePlist(data []byte) (map[string]string, error) {
 		return nil, fmt.Errorf("no plist dict found")
 	}
 	return result, nil
+}
+
+// BundlePlist exposes an application's top-level Info.plist scalars, such as
+// SUPublicEDKey, to other packages.
+func BundlePlist(appPath string) (map[string]string, error) {
+	return loadPlist(filepath.Join(appPath, "Contents", "Info.plist"))
 }

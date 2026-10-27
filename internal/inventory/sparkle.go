@@ -28,6 +28,9 @@ type SparkleCheck struct {
 	InstalledBuild   string              `json:"installed_build,omitempty"`
 	AvailableBuild   string              `json:"available_build,omitempty"`
 	AvailableVersion string              `json:"available_version,omitempty"`
+	EnclosureURL     string              `json:"enclosure_url,omitempty"`
+	EdSignature      string              `json:"ed_signature,omitempty"`
+	EnclosureLength  int64               `json:"enclosure_length,omitempty"`
 	Status           string              `json:"status"`
 	Reason           string              `json:"reason,omitempty"`
 	Diagnostics      *SparkleDiagnostics `json:"diagnostics,omitempty"`
@@ -128,6 +131,8 @@ type appcast struct {
 			Short     string `xml:"http://www.andymatuschak.org/xml-namespaces/sparkle shortVersionString,attr"`
 			OS        string `xml:"http://www.andymatuschak.org/xml-namespaces/sparkle os,attr"`
 			DeltaFrom string `xml:"http://www.andymatuschak.org/xml-namespaces/sparkle deltaFrom,attr"`
+			EdSig     string `xml:"http://www.andymatuschak.org/xml-namespaces/sparkle edSignature,attr"`
+			Length    int64  `xml:"length,attr"`
 		} `xml:"enclosure"`
 		Deltas []struct{} `xml:"http://www.andymatuschak.org/xml-namespaces/sparkle deltas>enclosure"`
 	} `xml:"channel>item"`
@@ -392,6 +397,7 @@ func checkSparkle(ctx context.Context, apps []Application, fetch AppcastFetcher,
 				if bestShort == "" {
 					bestShort = it.Enclosure.Short
 				}
+				c.EnclosureURL, c.EdSignature, c.EnclosureLength = it.Enclosure.URL, it.Enclosure.EdSig, it.Enclosure.Length
 			}
 		}
 		if best != a.Build {
@@ -399,6 +405,7 @@ func checkSparkle(ctx context.Context, apps []Application, fetch AppcastFetcher,
 			c.AvailableBuild = best
 			c.AvailableVersion = bestShort
 		} else if uncertain {
+			c.EnclosureURL, c.EdSignature, c.EnclosureLength = "", "", 0
 			c.Reason = "some releases have unknown compatibility or version ordering"
 		} else if eligible {
 			c.Status = "NOT FLAGGED"

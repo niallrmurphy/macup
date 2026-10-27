@@ -10,6 +10,7 @@ import (
 	"github.com/niallrmurphy/macup/internal/inventory"
 	"github.com/niallrmurphy/macup/internal/output"
 	"github.com/niallrmurphy/macup/internal/probe"
+	"github.com/niallrmurphy/macup/internal/update"
 	"os"
 	"sort"
 	"strings"
@@ -110,225 +111,11 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, "unexpected arguments:", fs.Args())
 			return 2
 		}
-		// Inventory sources and update-check providers are independent selections.
-		providerSet, err := parseProviders(*providersFlag)
+		cfg := scanConfig{providersFlag: *providersFlag, sparkleFlag: *sparkleFlag, debugFlag: *debugFlag, debugXMLDir: *debugXMLDir, lookupFlag: *lookupFlag, noLookupFlag: *noLookupFlag, appsFlag: *appsFlag, brewFlag: *brewFlag, appStoreFlag: *appStoreFlag, rootsFlag: *rootsFlag, offlineFlag: *offlineFlag, cacheTTL: *cacheTTL, freshFlag: *freshFlag, quietFlag: *quietFlag, verboseFlag: *verboseFlag, includeSystem: *includeSystem}
+		result, err := performScan(cfg)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 2
-		}
-		if *sparkleFlag || *debugFlag || *debugXMLDir != "" {
-			providerSet["sparkle"] = true
-		}
-		if *lookupFlag {
-			providerSet["lookup"] = true
-		}
-		if *noLookupFlag {
-			delete(providerSet, "lookup")
-		}
-		explicitSource := *appsFlag || *brewFlag || *appStoreFlag || strings.TrimSpace(*rootsFlag) != ""
-		useApps := !explicitSource || *appsFlag || strings.TrimSpace(*rootsFlag) != ""
-		useBrew := !explicitSource || *brewFlag
-		useAppStore := !explicitSource || *appStoreFlag
-		if *offlineFlag {
-			// Nothing leaves the machine. mas asks Apple for outdated apps, every
-			// provider talks to a vendor or catalogue, and the cache holds
-			// answers from earlier network runs; all three are off.
-			providerSet = map[string]bool{}
-			useAppStore = false
-			*cacheTTL = 0
-		}
-		useMicrosoft := providerSet["microsoft"] && useApps
-		useAdobe := providerSet["adobe"] && useApps
-		useSparkle := providerSet["sparkle"] && useApps
-		useLookup := providerSet["lookup"] && useApps
-
-		// Every source and provider announces itself on stderr, so slow steps
-		// (msupdate, catalogue fetches) are visible without touching stdout.
-		announce := func(format string, args ...any) {
-			if !*quietFlag {
-				fmt.Fprintf(os.Stderr, format+"\n", args...)
-			}
-		}
-		store := cache.Open(*cacheTTL)
-		store.Prune()
-		cached := func(key string, v any) bool { return !*freshFlag && store.Get(key, v) }
-		result := inventory.Result{Applications: []inventory.Application{}, Warnings: []inventory.Warning{}, Roots: []string{}}
-		if *offlineFlag {
-			announce("Offline: nothing leaves the machine this run")
-		}
-		if useApps {
-			roots := selectedRoots(*rootsFlag)
-			announce("Applications: scanning %d roots for .app bundles", len(roots))
-			result = inventory.Scan(context.Background(), roots)
-			if !*includeSystem {
-				result.Applications = inventory.FilterSystemApplications(result.Applications)
-			}
-			announce("Applications: %d bundles found; %d warnings", len(result.Applications), len(result.Warnings))
-		}
-		if useBrew {
-			announce("Homebrew: listing installed and outdated formulae and casks")
-			b := inventory.ScanHomebrew(context.Background())
-			result.Homebrew = &b
-			announce("Homebrew: %s", summariseOutdated(b.Available, len(b.Packages), countBrewOutdated(b.Packages)))
-		}
-		if useAppStore {
-			announce("App Store: querying mas for installed and outdated apps")
-			a := inventory.ScanAppStore(context.Background())
-			result.AppStore = &a
-			announce("App Store: %s", summariseOutdated(a.Available, len(a.Packages), countMasOutdated(a.Packages)))
-			if useApps && a.Available {
-				inventory.AnnotateAppStoreIDs(context.Background(), &result)
-			}
-		}
-		inventory.Reconcile(&result)
-		if useMicrosoft {
-			key := "microsoft|" + versionsKey(result.Applications, "com.microsoft.")
-			var m inventory.MicrosoftResult
-			if cached(key, &m) && m.CheckStatus == "checked" {
-				announce("Microsoft: using cached msupdate result")
-			} else {
-				announce("Microsoft: running msupdate --list (can take over a minute)")
-				m = inventory.ScanMicrosoft(context.Background())
-				if m.CheckStatus == "checked" {
-					store.Put(key, m)
-				}
-			}
-			result.Microsoft = &m
-			inventory.ApplyMicrosoft(&result)
-			announce("Microsoft: %s", summariseCheck(m.CheckStatus, len(m.Updates), "updates reported"))
-		}
-		if useAdobe {
-			key := "adobe|" + versionsKey(result.Applications, "com.adobe.")
-			var a inventory.AdobeResult
-			if cached(key, &a) && a.CheckStatus == "checked" {
-				announce("Adobe: using cached catalogue result")
-			} else {
-				announce("Adobe: reading installed products and fetching the release catalogue")
-				a = inventory.ScanAdobe(context.Background())
-				if a.CheckStatus == "checked" {
-					store.Put(key, a)
-				}
-			}
-			result.Adobe = &a
-			inventory.ApplyAdobe(&result)
-			announce("Adobe: %s", summariseCheck(a.CheckStatus, len(a.Products), "catalogue releases"))
-		}
-		if useSparkle {
-			// Feeds set in code or in user defaults are invisible to Info.plist alone.
-			inventory.SparkleFeedFinder = probe.SparkleFeed
-			var progress inventory.SparkleProgressFunc
-			// Per-feed lines are noisy once the checker is trusted; the summary below stays.
-			if *verboseFlag || *debugFlag || *debugXMLDir != "" {
-				progress = func(e inventory.SparkleProgress) {
-					switch e.Phase {
-					case "start":
-						fmt.Fprintf(os.Stderr, "Sparkle [%d/%d] %s: checking feed...\n", e.Index, e.Total, e.Name)
-					case "done", "skip":
-						detail := e.Status
-						if e.Reason != "" {
-							detail += " (" + e.Reason + ")"
-						}
-						if e.Phase == "skip" {
-							fmt.Fprintf(os.Stderr, "Sparkle [%d/%d] %s: %s (skipped before fetch)\n", e.Index, e.Total, e.Name, detail)
-						} else {
-							fmt.Fprintf(os.Stderr, "Sparkle [%d/%d] %s: %s (%s)\n", e.Index, e.Total, e.Name, detail, e.Duration.Round(time.Millisecond))
-						}
-						if *debugFlag || *debugXMLDir != "" {
-							printSparkleDiagnostics(os.Stderr, e.Check)
-						}
-					}
-				}
-			}
-			// Reuse checks for apps whose installed version has not changed.
-			var toCheck []inventory.Application
-			var reused []inventory.SparkleCheck
-			noFeed := 0
-			for _, a := range result.Applications {
-				var c inventory.SparkleCheck
-				switch {
-				case !cached(sparkleKey(a), &c):
-					toCheck = append(toCheck, a)
-				case c.Status == "NO FEED":
-					noFeed++ // remembered as having nothing to check; not a result
-				default:
-					reused = append(reused, c)
-				}
-			}
-			switch {
-			case len(reused)+noFeed > 0 && len(toCheck) == 0:
-				announce("Sparkle: all %d applications served from cache (%d feeds, %d without one)", len(reused)+noFeed, len(reused), noFeed)
-			case len(reused)+noFeed > 0:
-				announce("Sparkle: %d applications served from cache; examining %d for update feeds", len(reused)+noFeed, len(toCheck))
-			default:
-				announce("Sparkle: examining %d applications for update feeds", len(toCheck))
-			}
-			var s inventory.SparkleResult
-			if *debugXMLDir != "" {
-				s = inventory.CheckSparkleWithXMLSamples(context.Background(), toCheck, nil, progress, *debugXMLDir)
-			} else if *debugFlag {
-				s = inventory.CheckSparkleWithDiagnostics(context.Background(), toCheck, nil, progress)
-			} else {
-				s = inventory.CheckSparkleWithProgress(context.Background(), toCheck, nil, progress)
-			}
-			byPath := map[string]inventory.Application{}
-			for _, a := range toCheck {
-				byPath[a.Path] = a
-			}
-			// Unchecked results are cached too: most are deterministic (no
-			// comparable release, invalid feed URL) and a transient failure is
-			// retried after the TTL or with --fresh.
-			for _, c := range s.Checks {
-				if a, ok := byPath[c.Path]; ok {
-					store.Put(sparkleKey(a), c)
-				}
-				delete(byPath, c.Path)
-			}
-			// Apps that produced no check have no feed; remember that so the next
-			// scan does not re-inspect their bundles.
-			for path, a := range byPath {
-				store.Put(sparkleKey(a), inventory.SparkleCheck{Path: path, Status: "NO FEED"})
-			}
-			s.Checks = append(s.Checks, reused...)
-			result.Sparkle = &s
-			inventory.ApplySparkle(&result)
-			if !*quietFlag || *debugFlag || *debugXMLDir != "" {
-				var outdated, notFlagged, unchecked int
-				for _, c := range s.Checks {
-					switch c.Status {
-					case "OUTDATED":
-						outdated++
-					case "NOT FLAGGED":
-						notFlagged++
-					default:
-						unchecked++
-					}
-				}
-				fmt.Fprintf(os.Stderr, "Sparkle: %d feeds found; %d outdated, %d not flagged, %d unchecked\n", len(s.Checks), outdated, notFlagged, unchecked)
-				if *debugFlag {
-					fmt.Fprintln(os.Stderr, "Sparkle: every discovered feed is included above, including pre-fetch skips")
-				}
-			}
-		}
-		if useApps {
-			// Label what remains: apps that update themselves, or are updated by
-			// the App Store, a browser, a vendor agent, or their parent product.
-			inventory.ApplyUpdaters(&result, probe.Updater)
-		}
-		if useLookup {
-			runLookups(context.Background(), &result, announce, cached, store.Put)
-		} else if useApps && !*offlineFlag {
-			unresolved := 0
-			for _, e := range result.Entries {
-				if inventory.LookupEligible(e) {
-					unresolved++
-				}
-			}
-			if unresolved > 0 {
-				announce("Lookup: skipped; %d applications have no version source (public catalogues and feeds are consulted with --lookup)", unresolved)
-			}
-		}
-		if *offlineFlag {
-			announce("Offline: no network provider ran; statuses reflect local evidence and Homebrew's local state only")
 		}
 		if *jsonOut {
 			err = output.JSON(os.Stdout, result)
@@ -341,6 +128,47 @@ func run(args []string) int {
 		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	case "update":
+		fs := flag.NewFlagSet("update", flag.ContinueOnError)
+		yes := fs.Bool("yes", false, "execute the plan; without it only the plan is printed")
+		fetchOnly := fs.Bool("fetch-only", false, "download and verify Sparkle updates into the staging directory, nothing else")
+		allowUnverified := fs.Bool("allow-unverified", false, "download Sparkle enclosures that cannot be signature-verified (not recommended)")
+		only := fs.String("only", "", "comma-separated names (case-insensitive substrings) to limit the plan to")
+		quietFlag := fs.Bool("quiet", false, "suppress scan progress messages on stderr")
+		freshFlag := fs.Bool("fresh", false, "ignore cached provider results for the scan")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if fs.NArg() != 0 {
+			fmt.Fprintln(os.Stderr, "unexpected arguments:", fs.Args())
+			return 2
+		}
+		cfg := defaultScanConfig()
+		cfg.quietFlag, cfg.freshFlag = *quietFlag, *freshFlag
+		result, err := performScan(cfg)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 2
+		}
+		plan := update.Plan(result)
+		if strings.TrimSpace(*only) != "" {
+			plan = update.Filter(plan, strings.Split(*only, ","))
+		}
+		if !*yes && !*fetchOnly {
+			if err := update.PrintPlan(os.Stdout, plan); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			fmt.Fprintln(os.Stderr, "Plan only. Re-run with --yes to execute, or --fetch-only to download and verify Sparkle updates.")
+			return 0
+		}
+		opts := update.Options{FetchOnly: *fetchOnly, AllowUnverified: *allowUnverified, Out: os.Stdout, Err: os.Stderr}
+		failed := update.Execute(context.Background(), plan, opts)
+		if failed > 0 {
+			fmt.Fprintf(os.Stderr, "%d actions failed\n", failed)
 			return 1
 		}
 		return 0
@@ -370,6 +198,248 @@ func run(args []string) int {
 
 // runLookups queries keyed public sources for entries no provider evaluated,
 // with a small worker pool, and folds the verdicts into the result.
+// scanConfig carries the scan command's flags so `update` can run the same
+// scan before planning.
+type scanConfig struct {
+	providersFlag                                    string
+	sparkleFlag, debugFlag                           bool
+	debugXMLDir                                      string
+	lookupFlag, noLookupFlag                         bool
+	appsFlag, brewFlag, appStoreFlag                 bool
+	rootsFlag                                        string
+	offlineFlag                                      bool
+	cacheTTL                                         time.Duration
+	freshFlag, quietFlag, verboseFlag, includeSystem bool
+}
+
+func defaultScanConfig() scanConfig {
+	return scanConfig{providersFlag: "all", cacheTTL: time.Hour}
+}
+
+// performScan runs sources and providers and returns the reconciled result.
+func performScan(cfg scanConfig) (inventory.Result, error) {
+	// Inventory sources and update-check providers are independent selections.
+	providerSet, err := parseProviders(cfg.providersFlag)
+	if err != nil {
+		return inventory.Result{}, err
+	}
+	if cfg.sparkleFlag || cfg.debugFlag || cfg.debugXMLDir != "" {
+		providerSet["sparkle"] = true
+	}
+	if cfg.lookupFlag {
+		providerSet["lookup"] = true
+	}
+	if cfg.noLookupFlag {
+		delete(providerSet, "lookup")
+	}
+	explicitSource := cfg.appsFlag || cfg.brewFlag || cfg.appStoreFlag || strings.TrimSpace(cfg.rootsFlag) != ""
+	useApps := !explicitSource || cfg.appsFlag || strings.TrimSpace(cfg.rootsFlag) != ""
+	useBrew := !explicitSource || cfg.brewFlag
+	useAppStore := !explicitSource || cfg.appStoreFlag
+	if cfg.offlineFlag {
+		// Nothing leaves the machine. mas asks Apple for outdated apps, every
+		// provider talks to a vendor or catalogue, and the cache holds
+		// answers from earlier network runs; all three are off.
+		providerSet = map[string]bool{}
+		useAppStore = false
+		cfg.cacheTTL = 0
+	}
+	useMicrosoft := providerSet["microsoft"] && useApps
+	useAdobe := providerSet["adobe"] && useApps
+	useSparkle := providerSet["sparkle"] && useApps
+	useLookup := providerSet["lookup"] && useApps
+
+	// Every source and provider announces itself on stderr, so slow steps
+	// (msupdate, catalogue fetches) are visible without touching stdout.
+	announce := func(format string, args ...any) {
+		if !cfg.quietFlag {
+			fmt.Fprintf(os.Stderr, format+"\n", args...)
+		}
+	}
+	store := cache.Open(cfg.cacheTTL)
+	store.Prune()
+	cached := func(key string, v any) bool { return !cfg.freshFlag && store.Get(key, v) }
+	result := inventory.Result{Applications: []inventory.Application{}, Warnings: []inventory.Warning{}, Roots: []string{}}
+	if cfg.offlineFlag {
+		announce("Offline: nothing leaves the machine this run")
+	}
+	if useApps {
+		roots := selectedRoots(cfg.rootsFlag)
+		announce("Applications: scanning %d roots for .app bundles", len(roots))
+		result = inventory.Scan(context.Background(), roots)
+		if !cfg.includeSystem {
+			result.Applications = inventory.FilterSystemApplications(result.Applications)
+		}
+		announce("Applications: %d bundles found; %d warnings", len(result.Applications), len(result.Warnings))
+	}
+	if useBrew {
+		announce("Homebrew: listing installed and outdated formulae and casks")
+		b := inventory.ScanHomebrew(context.Background())
+		result.Homebrew = &b
+		announce("Homebrew: %s", summariseOutdated(b.Available, len(b.Packages), countBrewOutdated(b.Packages)))
+	}
+	if useAppStore {
+		announce("App Store: querying mas for installed and outdated apps")
+		a := inventory.ScanAppStore(context.Background())
+		result.AppStore = &a
+		announce("App Store: %s", summariseOutdated(a.Available, len(a.Packages), countMasOutdated(a.Packages)))
+		if useApps && a.Available {
+			inventory.AnnotateAppStoreIDs(context.Background(), &result)
+		}
+	}
+	inventory.Reconcile(&result)
+	if useMicrosoft {
+		key := "microsoft|" + versionsKey(result.Applications, "com.microsoft.")
+		var m inventory.MicrosoftResult
+		if cached(key, &m) && m.CheckStatus == "checked" {
+			announce("Microsoft: using cached msupdate result")
+		} else {
+			announce("Microsoft: running msupdate --list (can take over a minute)")
+			m = inventory.ScanMicrosoft(context.Background())
+			if m.CheckStatus == "checked" {
+				store.Put(key, m)
+			}
+		}
+		result.Microsoft = &m
+		inventory.ApplyMicrosoft(&result)
+		announce("Microsoft: %s", summariseCheck(m.CheckStatus, len(m.Updates), "updates reported"))
+	}
+	if useAdobe {
+		key := "adobe|" + versionsKey(result.Applications, "com.adobe.")
+		var a inventory.AdobeResult
+		if cached(key, &a) && a.CheckStatus == "checked" {
+			announce("Adobe: using cached catalogue result")
+		} else {
+			announce("Adobe: reading installed products and fetching the release catalogue")
+			a = inventory.ScanAdobe(context.Background())
+			if a.CheckStatus == "checked" {
+				store.Put(key, a)
+			}
+		}
+		result.Adobe = &a
+		inventory.ApplyAdobe(&result)
+		announce("Adobe: %s", summariseCheck(a.CheckStatus, len(a.Products), "catalogue releases"))
+	}
+	if useSparkle {
+		// Feeds set in code or in user defaults are invisible to Info.plist alone.
+		inventory.SparkleFeedFinder = probe.SparkleFeed
+		var progress inventory.SparkleProgressFunc
+		// Per-feed lines are noisy once the checker is trusted; the summary below stays.
+		if cfg.verboseFlag || cfg.debugFlag || cfg.debugXMLDir != "" {
+			progress = func(e inventory.SparkleProgress) {
+				switch e.Phase {
+				case "start":
+					fmt.Fprintf(os.Stderr, "Sparkle [%d/%d] %s: checking feed...\n", e.Index, e.Total, e.Name)
+				case "done", "skip":
+					detail := e.Status
+					if e.Reason != "" {
+						detail += " (" + e.Reason + ")"
+					}
+					if e.Phase == "skip" {
+						fmt.Fprintf(os.Stderr, "Sparkle [%d/%d] %s: %s (skipped before fetch)\n", e.Index, e.Total, e.Name, detail)
+					} else {
+						fmt.Fprintf(os.Stderr, "Sparkle [%d/%d] %s: %s (%s)\n", e.Index, e.Total, e.Name, detail, e.Duration.Round(time.Millisecond))
+					}
+					if cfg.debugFlag || cfg.debugXMLDir != "" {
+						printSparkleDiagnostics(os.Stderr, e.Check)
+					}
+				}
+			}
+		}
+		// Reuse checks for apps whose installed version has not changed.
+		var toCheck []inventory.Application
+		var reused []inventory.SparkleCheck
+		noFeed := 0
+		for _, a := range result.Applications {
+			var c inventory.SparkleCheck
+			switch {
+			case !cached(sparkleKey(a), &c):
+				toCheck = append(toCheck, a)
+			case c.Status == "NO FEED":
+				noFeed++ // remembered as having nothing to check; not a result
+			default:
+				reused = append(reused, c)
+			}
+		}
+		switch {
+		case len(reused)+noFeed > 0 && len(toCheck) == 0:
+			announce("Sparkle: all %d applications served from cache (%d feeds, %d without one)", len(reused)+noFeed, len(reused), noFeed)
+		case len(reused)+noFeed > 0:
+			announce("Sparkle: %d applications served from cache; examining %d for update feeds", len(reused)+noFeed, len(toCheck))
+		default:
+			announce("Sparkle: examining %d applications for update feeds", len(toCheck))
+		}
+		var s inventory.SparkleResult
+		if cfg.debugXMLDir != "" {
+			s = inventory.CheckSparkleWithXMLSamples(context.Background(), toCheck, nil, progress, cfg.debugXMLDir)
+		} else if cfg.debugFlag {
+			s = inventory.CheckSparkleWithDiagnostics(context.Background(), toCheck, nil, progress)
+		} else {
+			s = inventory.CheckSparkleWithProgress(context.Background(), toCheck, nil, progress)
+		}
+		byPath := map[string]inventory.Application{}
+		for _, a := range toCheck {
+			byPath[a.Path] = a
+		}
+		// Unchecked results are cached too: most are deterministic (no
+		// comparable release, invalid feed URL) and a transient failure is
+		// retried after the TTL or with --fresh.
+		for _, c := range s.Checks {
+			if a, ok := byPath[c.Path]; ok {
+				store.Put(sparkleKey(a), c)
+			}
+			delete(byPath, c.Path)
+		}
+		// Apps that produced no check have no feed; remember that so the next
+		// scan does not re-inspect their bundles.
+		for path, a := range byPath {
+			store.Put(sparkleKey(a), inventory.SparkleCheck{Path: path, Status: "NO FEED"})
+		}
+		s.Checks = append(s.Checks, reused...)
+		result.Sparkle = &s
+		inventory.ApplySparkle(&result)
+		if !cfg.quietFlag || cfg.debugFlag || cfg.debugXMLDir != "" {
+			var outdated, notFlagged, unchecked int
+			for _, c := range s.Checks {
+				switch c.Status {
+				case "OUTDATED":
+					outdated++
+				case "NOT FLAGGED":
+					notFlagged++
+				default:
+					unchecked++
+				}
+			}
+			fmt.Fprintf(os.Stderr, "Sparkle: %d feeds found; %d outdated, %d not flagged, %d unchecked\n", len(s.Checks), outdated, notFlagged, unchecked)
+			if cfg.debugFlag {
+				fmt.Fprintln(os.Stderr, "Sparkle: every discovered feed is included above, including pre-fetch skips")
+			}
+		}
+	}
+	if useApps {
+		// Label what remains: apps that update themselves, or are updated by
+		// the App Store, a browser, a vendor agent, or their parent product.
+		inventory.ApplyUpdaters(&result, probe.Updater)
+	}
+	if useLookup {
+		runLookups(context.Background(), &result, announce, cached, store.Put)
+	} else if useApps && !cfg.offlineFlag {
+		unresolved := 0
+		for _, e := range result.Entries {
+			if inventory.LookupEligible(e) {
+				unresolved++
+			}
+		}
+		if unresolved > 0 {
+			announce("Lookup: skipped; %d applications have no version source (public catalogues and feeds are consulted with --lookup)", unresolved)
+		}
+	}
+	if cfg.offlineFlag {
+		announce("Offline: no network provider ran; statuses reflect local evidence and Homebrew's local state only")
+	}
+	return result, nil
+}
+
 func runLookups(ctx context.Context, result *inventory.Result, announce func(string, ...any), cached func(string, any) bool, put func(string, any)) {
 	byPath := map[string]inventory.Application{}
 	for _, a := range result.Applications {
@@ -434,12 +504,15 @@ func runLookups(ctx context.Context, result *inventory.Result, announce func(str
 }
 
 // Cache keys include everything whose change must invalidate the entry: the
-// bundle path and its installed version and build.
+// bundle path and its installed version and build, and a schema number that
+// is bumped whenever the cached structure gains fields.
+const cacheSchema = "2"
+
 func sparkleKey(a inventory.Application) string {
-	return "sparkle|" + a.Path + "|" + a.Version + "|" + a.Build
+	return "sparkle|" + cacheSchema + "|" + a.Path + "|" + a.Version + "|" + a.Build
 }
 func lookupKey(a inventory.Application) string {
-	return "lookup|" + a.Path + "|" + a.Version + "|" + a.Build
+	return "lookup|" + cacheSchema + "|" + a.Path + "|" + a.Version + "|" + a.Build
 }
 
 // versionsKey summarises the installed versions of one vendor's apps so a
@@ -579,6 +652,7 @@ func usage() {
 
 Usage:
   macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle,adobe,lookup] [--offline] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--lookup|--no-lookup] [--cache-ttl 1h] [--fresh] [--quiet] [--verbose] [--all] [--status "NO SOURCE"] [--paths] [--roots /Applications,/Users/me/Applications]
+  macup update [--only NAME,...] [--yes | --fetch-only] [--allow-unverified] [--fresh] [--quiet]
   macup probe [--lookup] [--origins] [--fetch] [--model llama3.2:latest] [--max-pages 3] /Applications/Example.app
   macup probe --all [--roots /Applications] [--include-system] [--lookup] [--origins] [--fetch] [--model MODEL] [--workers 2]
   macup doctor [--roots /Applications]
