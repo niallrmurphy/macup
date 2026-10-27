@@ -85,6 +85,10 @@ func TestSparkleProgressReportsStartAndDone(t *testing.T) {
 }
 
 func TestSparkleMixedFeedDoesNotPoisonEligibleRelease(t *testing.T) {
+	// Simulate an unknown host version (as on Linux) so the OS-gated release is indeterminate.
+	old := hostVersion
+	hostVersion = func(context.Context) string { return "" }
+	defer func() { hostVersion = old }()
 	root := t.TempDir()
 	p := filepath.Join(root, "Mixed.app")
 	if err := os.MkdirAll(filepath.Join(p, "Contents"), 0755); err != nil {

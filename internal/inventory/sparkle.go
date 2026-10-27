@@ -170,8 +170,9 @@ func compareBuilds(a, b string) (int, bool) {
 }
 
 // hostVersion is deliberately unknown outside macOS: unknown eligibility is
-// never treated as proof that an update is available.
-func hostVersion(ctx context.Context) string {
+// never treated as proof that an update is available. It is a variable so
+// tests can simulate an unknown host on any platform.
+var hostVersion = func(ctx context.Context) string {
 	if runtime.GOOS != "darwin" {
 		return ""
 	}

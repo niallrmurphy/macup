@@ -50,3 +50,24 @@ func TestProbeAllBatch(t *testing.T) {
 		t.Fatalf("ordering or error handling: %+v", got.Results)
 	}
 }
+
+func TestProgressSummaries(t *testing.T) {
+	if got := summariseOutdated(false, 3, 1); got != "unavailable" {
+		t.Fatal(got)
+	}
+	if got := summariseOutdated(true, 3, 1); got != "3 packages; 1 outdated" {
+		t.Fatal(got)
+	}
+	if got := summariseCheck("checked", 2, "updates reported"); got != "checked; 2 updates reported" {
+		t.Fatal(got)
+	}
+	if got := summariseCheck("failed", 0, "x"); got != "failed" {
+		t.Fatal(got)
+	}
+	if got := summariseCheck("", 0, "x"); got != "unavailable" {
+		t.Fatal(got)
+	}
+	if countBrewOutdated([]inventory.BrewPackage{{Outdated: true}, {}}) != 1 || countMasOutdated([]inventory.AppStorePackage{{Outdated: true}, {Outdated: true}}) != 2 {
+		t.Fatal("outdated counts")
+	}
+}

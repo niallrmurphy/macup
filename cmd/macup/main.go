@@ -87,6 +87,8 @@ func run(args []string) int {
 		brewFlag := fs.Bool("brew", false, "scan installed Homebrew formulae and casks")
 		sparkleFlag := fs.Bool("sparkle", false, "check discovered apps with Sparkle appcasts (network access)")
 		quietFlag := fs.Bool("quiet", false, "suppress scan progress messages on stderr")
+		verboseFlag := fs.Bool("verbose", false, "print per-feed Sparkle progress on stderr")
+		allFlag := fs.Bool("all", false, "show entries already known to be current (table output only)")
 		debugFlag := fs.Bool("sparkle-debug", false, "print Sparkle per-feed diagnostics to stderr (implies --sparkle)")
 		debugXMLDir := fs.String("sparkle-debug-xml", "", "directory for sanitized appcast XML structure samples (implies --sparkle-debug)")
 		appStoreFlag := fs.Bool("appstore", false, "scan Mac App Store software via mas")
@@ -116,39 +118,60 @@ func run(args []string) int {
 		useAdobe := providerSet["adobe"] && useApps
 		useSparkle := providerSet["sparkle"] && useApps
 
+		// Every source and provider announces itself on stderr, so slow steps
+		// (msupdate, catalogue fetches) are visible without touching stdout.
+		announce := func(format string, args ...any) {
+			if !*quietFlag {
+				fmt.Fprintf(os.Stderr, format+"\n", args...)
+			}
+		}
 		result := inventory.Result{Applications: []inventory.Application{}, Warnings: []inventory.Warning{}, Roots: []string{}}
 		if useApps {
-			result = inventory.Scan(context.Background(), selectedRoots(*rootsFlag))
+			roots := selectedRoots(*rootsFlag)
+			announce("Applications: scanning %d roots for .app bundles", len(roots))
+			result = inventory.Scan(context.Background(), roots)
 			if !*includeSystem {
 				result.Applications = inventory.FilterSystemApplications(result.Applications)
 			}
+			announce("Applications: %d bundles found; %d warnings", len(result.Applications), len(result.Warnings))
 		}
 		if useBrew {
+			announce("Homebrew: listing installed and outdated formulae and casks")
 			b := inventory.ScanHomebrew(context.Background())
 			result.Homebrew = &b
+			announce("Homebrew: %s", summariseOutdated(b.Available, len(b.Packages), countBrewOutdated(b.Packages)))
 		}
 		if useAppStore {
+			announce("App Store: querying mas for installed and outdated apps")
 			a := inventory.ScanAppStore(context.Background())
 			result.AppStore = &a
+			announce("App Store: %s", summariseOutdated(a.Available, len(a.Packages), countMasOutdated(a.Packages)))
 			if useApps && a.Available {
 				inventory.AnnotateAppStoreIDs(context.Background(), &result)
 			}
 		}
 		inventory.Reconcile(&result)
 		if useMicrosoft {
+			announce("Microsoft: running msupdate --list (can take over a minute)")
 			m := inventory.ScanMicrosoft(context.Background())
 			result.Microsoft = &m
 			inventory.ApplyMicrosoft(&result)
+			announce("Microsoft: %s", summariseCheck(m.CheckStatus, len(m.Updates), "updates reported"))
 		}
 		if useAdobe {
+			announce("Adobe: reading installed products and fetching the release catalogue")
 			a := inventory.ScanAdobe(context.Background())
 			result.Adobe = &a
 			inventory.ApplyAdobe(&result)
+			announce("Adobe: %s", summariseCheck(a.CheckStatus, len(a.Products), "catalogue releases"))
 		}
 		if useSparkle {
 			var progress inventory.SparkleProgressFunc
 			if !*quietFlag || *debugFlag || *debugXMLDir != "" {
 				fmt.Fprintf(os.Stderr, "Sparkle: examining %d applications for update feeds\n", len(result.Applications))
+			}
+			// Per-feed lines are noisy once the checker is trusted; the summary below stays.
+			if *verboseFlag || *debugFlag || *debugXMLDir != "" {
 				progress = func(e inventory.SparkleProgress) {
 					switch e.Phase {
 					case "start":
@@ -200,7 +223,7 @@ func run(args []string) int {
 		if *jsonOut {
 			err = output.JSON(os.Stdout, result)
 		} else {
-			err = output.Table(os.Stdout, result)
+			err = output.TableWith(os.Stdout, result, output.TableOptions{ShowAll: *allFlag})
 		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -230,6 +253,46 @@ func run(args []string) int {
 		return 2
 	}
 }
+
+// summariseOutdated phrases a package-manager result for the progress line.
+func summariseOutdated(available bool, total, outdated int) string {
+	if !available {
+		return "unavailable"
+	}
+	return fmt.Sprintf("%d packages; %d outdated", total, outdated)
+}
+
+// summariseCheck phrases a provider's check status for the progress line.
+func summariseCheck(status string, count int, noun string) string {
+	switch status {
+	case "checked":
+		return fmt.Sprintf("checked; %d %s", count, noun)
+	case "":
+		return "unavailable"
+	}
+	return status
+}
+
+func countBrewOutdated(pkgs []inventory.BrewPackage) int {
+	n := 0
+	for _, p := range pkgs {
+		if p.Outdated {
+			n++
+		}
+	}
+	return n
+}
+
+func countMasOutdated(pkgs []inventory.AppStorePackage) int {
+	n := 0
+	for _, p := range pkgs {
+		if p.Outdated {
+			n++
+		}
+	}
+	return n
+}
+
 func printSparkleDiagnostics(w *os.File, c inventory.SparkleCheck) {
 	fmt.Fprintf(w, "  Feed: %s\n  Installed build: %s\n", c.FeedURL, c.InstalledBuild)
 	if c.Diagnostics == nil {
@@ -314,7 +377,7 @@ func usage() {
 	fmt.Println(`macup — read-only macOS software inventory
 
 Usage:
-  macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle,adobe] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--quiet] [--roots /Applications,/Users/me/Applications]
+  macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle,adobe] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--quiet] [--verbose] [--all] [--roots /Applications,/Users/me/Applications]
   macup probe [--lookup] [--origins] [--fetch] [--model llama3.2:latest] [--max-pages 3] /Applications/Example.app
   macup probe --all [--roots /Applications] [--include-system] [--lookup] [--origins] [--fetch] [--model MODEL] [--workers 2]
   macup doctor [--roots /Applications]

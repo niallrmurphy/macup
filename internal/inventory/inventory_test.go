@@ -54,3 +54,36 @@ func TestParsePlistNestedValuesDontOverwrite(t *testing.T) {
 		t.Fatalf("parse %v: %v", m, err)
 	}
 }
+
+func TestReadBundleIOSWrapper(t *testing.T) {
+	root := t.TempDir()
+	app := filepath.Join(root, "Carcassonne.app")
+	inner := filepath.Join(app, "Wrapper", "carcassonne.app")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	info := `<?xml version="1.0"?><plist version="1.0"><dict>
+ <key>CFBundleDisplayName</key><string>Carcassonne</string>
+ <key>CFBundleIdentifier</key><string>com.example.carcassonne</string>
+ <key>CFBundleShortVersionString</key><string>1.10.2967</string>
+ <key>CFBundleVersion</key><string>2967</string>
+ <key>DTPlatformName</key><string>iphoneos</string>
+ </dict></plist>`
+	meta := `<?xml version="1.0"?><plist version="1.0"><dict><key>itemId</key><integer>1199912736</integer></dict></plist>`
+	if err := os.WriteFile(filepath.Join(inner, "Info.plist"), []byte(info), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(app, "Wrapper", "iTunesMetadata.plist"), []byte(meta), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a, err := ReadBundle(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Name != "Carcassonne" || a.Platform != "ios" || a.AppStoreID != "1199912736" || a.Version != "1.10.2967" || a.Path != app {
+		t.Fatalf("%+v", a)
+	}
+	if _, err = ReadBundle(filepath.Join(root, "Missing.app")); err == nil {
+		t.Fatal("expected error for missing bundle")
+	}
+}

@@ -63,3 +63,26 @@ func TestAvailableVersionLabels(t *testing.T) {
 		}
 	}
 }
+
+func TestTableHidesCurrentByDefault(t *testing.T) {
+	r := inventory.Result{Entries: []inventory.Entry{
+		{Name: "Stale", Installed: "1", Available: "2", Status: "OUTDATED", Sources: []string{"apps"}},
+		{Name: "Fine", Installed: "2", Status: "CURRENT", Sources: []string{"brew-formula"}},
+		{Name: "Unknown", Installed: "3", Status: "UNCHECKED", Sources: []string{"apps"}},
+	}}
+	var b bytes.Buffer
+	if err := TableWith(&b, r, TableOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	s := b.String()
+	if strings.Contains(s, "Fine") || !strings.Contains(s, "Stale") || !strings.Contains(s, "Unknown") || !strings.Contains(s, "2 entries shown; 1 current entries hidden") {
+		t.Fatal(s)
+	}
+	b.Reset()
+	if err := TableWith(&b, r, TableOptions{ShowAll: true}); err != nil {
+		t.Fatal(err)
+	}
+	if s = b.String(); !strings.Contains(s, "Fine") || !strings.Contains(s, "3 entries") {
+		t.Fatal(s)
+	}
+}

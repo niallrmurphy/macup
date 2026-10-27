@@ -22,6 +22,7 @@ go build -o macup ./cmd/macup
 ./macup scan --brew --appstore --json
 ./macup scan --roots ~/Applications # custom app roots only
 ./macup scan --apps --sparkle     # opt-in Sparkle appcast HTTP requests
+./macup scan --all               # include entries already known to be current
 ./macup doctor
 ```
 
@@ -42,7 +43,15 @@ Optional dependencies: Homebrew (`brew`) for the Homebrew source and the
 [mas CLI](https://github.com/mas-cli/mas) for the App Store source.
 Missing tools produce warnings instead of aborting the scan.
 
-All selected sources are rendered in one table with the same columns.
+All selected sources are rendered in one table with the same columns. By
+default the table omits entries a provider has positively reported as
+`CURRENT` or `NOT FLAGGED`, and the footer says how many were hidden; pass
+`--all` to list everything. JSON output always contains every entry.
+
+iPhone and iPad apps installed from the App Store on Apple silicon are
+wrapped bundles without `Contents/Info.plist`. They are read from the inner
+bundle, reported with `"platform": "ios"` in JSON, and carry their App Store
+item identifier so they reconcile with `mas` output.
 A package `NOT FLAGGED` as outdated is **not** guaranteed to be current with
 its vendor. The plain `.app` scan has no update-checking source and uses
 `UNCHECKED`. Cask and App Store entries may also describe apps found in the
@@ -130,11 +139,17 @@ parsed feed; it is **not** proof of being fully up-to-date. No archives are
 downloaded or installed. Feed URLs in applications should be treated as
 untrusted, especially on untrusted machines.
 
-### Sparkle progress
+### Scan progress
 
-With `macup scan --sparkle`, feed checks are reported to **stderr** as they
-start and finish, followed by a summary. This makes slow network requests
-visible without mixing progress text into JSON or tabular **stdout**.
+Every source and provider announces when it starts and what it found on
+**stderr**, so nothing mixes into JSON or tabular **stdout**: the application
+scan, Homebrew, the App Store, Microsoft AutoUpdate (which can take over a
+minute), Adobe, and Sparkle. `--quiet` suppresses all of these.
+
+With `macup scan --sparkle`, a one-line start message and a closing summary
+go to **stderr**.
+`macup scan --sparkle --verbose` additionally reports each feed check as it
+starts and finishes, which makes slow network requests visible.
 `macup scan --sparkle --quiet` suppresses these messages (also useful with
 `--json`). Only apps with a discovered HTTPS Sparkle feed and a comparable
 numeric build trigger requests; the summary counts all discovered feeds,

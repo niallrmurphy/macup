@@ -18,6 +18,7 @@ type Application struct {
 	AppStoreID string `json:"app_store_id,omitempty"`
 	Version    string `json:"version,omitempty"`
 	Build      string `json:"build,omitempty"`
+	Platform   string `json:"platform,omitempty"`
 	Path       string `json:"path"`
 }
 
@@ -131,6 +132,18 @@ func ReadBundle(path string) (Application, error) {
 		return Application{}, fmt.Errorf("not an .app bundle: %s", path)
 	}
 	data, err := loadPlist(filepath.Join(path, "Contents", "Info.plist"))
+	platform, storeID := "", ""
+	if errors.Is(err, os.ErrNotExist) {
+		// iPhone and iPad apps installed from the App Store on Apple silicon are
+		// wrapped: Foo.app/Wrapper/foo.app/Info.plist, with store metadata beside it.
+		if inner, ok := wrappedBundle(path); ok {
+			data, err = loadPlist(filepath.Join(inner, "Info.plist"))
+			platform = "ios"
+			if meta, e := loadPlist(filepath.Join(path, "Wrapper", "iTunesMetadata.plist")); e == nil {
+				storeID = meta["itemId"]
+			}
+		}
+	}
 	if err != nil {
 		return Application{}, fmt.Errorf("reading Info.plist: %w", err)
 	}
@@ -138,7 +151,25 @@ func ReadBundle(path string) (Application, error) {
 	if name == "" {
 		name = base
 	}
-	return Application{Name: name, BundleID: data["CFBundleIdentifier"], Version: data["CFBundleShortVersionString"], Build: data["CFBundleVersion"], Path: path}, nil
+	return Application{Name: name, BundleID: data["CFBundleIdentifier"], AppStoreID: storeID, Version: data["CFBundleShortVersionString"], Build: data["CFBundleVersion"], Platform: platform, Path: path}, nil
+}
+
+// wrappedBundle returns the inner .app of an iOS wrapper, if there is exactly one.
+func wrappedBundle(path string) (string, bool) {
+	entries, err := os.ReadDir(filepath.Join(path, "Wrapper"))
+	if err != nil {
+		return "", false
+	}
+	inner := ""
+	for _, e := range entries {
+		if e.IsDir() && strings.EqualFold(filepath.Ext(e.Name()), ".app") {
+			if inner != "" {
+				return "", false
+			}
+			inner = filepath.Join(path, "Wrapper", e.Name())
+		}
+	}
+	return inner, inner != ""
 }
 
 func first(m map[string]string, keys ...string) string {

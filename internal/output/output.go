@@ -19,13 +19,36 @@ func JSON(w io.Writer, r inventory.Result) error {
 
 type row struct{ source, name, installed, available, status, updateSource, detail string }
 
-// Table presents all requested inventory sources in a single sortable view.
+// TableOptions controls which entries the table shows.
+type TableOptions struct {
+	// ShowAll includes entries already known to be current. By default the
+	// table lists only entries that may need attention.
+	ShowAll bool
+}
+
+// Table presents every entry from all requested inventory sources.
 func Table(w io.Writer, r inventory.Result) error {
+	return TableWith(w, r, TableOptions{ShowAll: true})
+}
+
+// currentStatus is a provider's positive statement that no update applies.
+func currentStatus(status string) bool {
+	return status == "CURRENT" || status == "NOT FLAGGED"
+}
+
+// TableWith presents inventory sources in a single sortable view, hiding
+// known-current entries unless asked for everything.
+func TableWith(w io.Writer, r inventory.Result, opts TableOptions) error {
 	if r.Entries == nil {
 		inventory.Reconcile(&r)
 	}
 	rows := make([]row, 0, len(r.Entries))
+	hidden := 0
 	for _, e := range r.Entries {
+		if !opts.ShowAll && currentStatus(e.Status) {
+			hidden++
+			continue
+		}
 		detail := e.Path
 		if detail == "" {
 			detail = e.Detail
@@ -53,7 +76,11 @@ func Table(w io.Writer, r inventory.Result) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "\n%d entries\n", len(rows)); err != nil {
+	if hidden > 0 {
+		if _, err := fmt.Fprintf(w, "\n%d entries shown; %d current entries hidden (use --all to show)\n", len(rows), hidden); err != nil {
+			return err
+		}
+	} else if _, err := fmt.Fprintf(w, "\n%d entries\n", len(rows)); err != nil {
 		return err
 	}
 	for _, x := range r.Warnings {

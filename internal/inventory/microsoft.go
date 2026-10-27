@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -88,7 +89,7 @@ func ScanMicrosoftWith(ctx context.Context, command MSUpdateCommand, convert Pli
 	}
 	// Some MAU versions can return an empty or human-readable response despite
 	// accepting --format plist. Do not report a successful check in that case.
-	payload, err := convert(ctx, raw)
+	payload, err := convert(ctx, plistPayload(raw))
 	if err != nil {
 		if microsoftNoUpdatesText(raw) {
 			r.Available = true
@@ -120,6 +121,9 @@ func parseMicrosoftUpdates(data []byte) ([]MicrosoftUpdate, error) {
 	}
 	raw, ok := root["Updates"]
 	if !ok {
+		if pending, ok := parseUpdateAssistant(root); ok {
+			return pending, nil
+		}
 		return nil, fmt.Errorf("missing Updates array (unknown MAU output schema)")
 	}
 	var items []map[string]interface{}
@@ -261,4 +265,44 @@ func microsoftNoUpdatesText(raw []byte) bool {
 		return false
 	}
 	return sawNoUpdates
+}
+
+// plistPayload isolates the property list from the progress lines and
+// terminal escapes msupdate prints around it when stdout is not a terminal.
+func plistPayload(raw []byte) []byte {
+	if i := bytes.Index(raw, []byte("<?xml")); i > 0 {
+		raw = raw[i:]
+	}
+	if i := bytes.LastIndex(raw, []byte("</plist>")); i >= 0 {
+		raw = raw[:i+len("</plist>")]
+	}
+	return raw
+}
+
+var assistantTitle = regexp.MustCompile(`Update (\d+(?:\.\d+)+)`)
+
+// parseUpdateAssistant reads the per-application state dictionary MAU emits
+// while an update is pending for an open application, for example
+// {"OPIM2019": {"AppState": 13, "Title": "Microsoft Outlook Update 16.114.2 (26102345)"}}.
+func parseUpdateAssistant(root map[string]json.RawMessage) ([]MicrosoftUpdate, bool) {
+	var result []MicrosoftUpdate
+	for id, raw := range root {
+		var state struct {
+			Title string `json:"Title"`
+		}
+		if json.Unmarshal(raw, &state) != nil || state.Title == "" {
+			return nil, false
+		}
+		m := assistantTitle.FindStringSubmatch(state.Title)
+		if m == nil {
+			return nil, false
+		}
+		name := mauNames[id]
+		if name == "" {
+			name = id
+		}
+		result = append(result, MicrosoftUpdate{ID: id, Name: name, AvailableVersion: m[1]})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result, len(result) > 0
 }

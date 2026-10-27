@@ -1,6 +1,7 @@
 package inventory
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -115,5 +116,35 @@ func TestMicrosoftCurrentCoverage(t *testing.T) {
 		if e.Status != "UNCHECKED" {
 			t.Fatalf("out-of-scope marked current: %+v", e)
 		}
+	}
+}
+
+func TestMicrosoftPlistPayloadSkipsProgressChatter(t *testing.T) {
+	raw := []byte("\x1b[2K Checking for updates...\x1b[2K Update Assistant: Checking, App is Open: [OPIM2019]\x1b[2K <?xml version=\"1.0\"?><plist version=\"1.0\"><dict></dict></plist>")
+	got := plistPayload(raw)
+	if !bytes.HasPrefix(got, []byte("<?xml")) {
+		t.Fatalf("%q", got)
+	}
+	clean := []byte("<?xml version=\"1.0\"?><plist/>")
+	if !bytes.Equal(plistPayload(clean), clean) {
+		t.Fatal("clean payload altered")
+	}
+	trailing := []byte("<?xml version=\"1.0\"?><plist version=\"1.0\"><dict/></plist>\n\nUpdate Assistant: Idle, App is Open: [OPIM2019]")
+	if got := plistPayload(trailing); !bytes.HasSuffix(got, []byte("</plist>")) {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestMicrosoftUpdateAssistantSchema(t *testing.T) {
+	payload := []byte(`{"OPIM2019":{"AppState":13,"Title":"Microsoft Outlook Update 16.114.2 (26102345)"}}`)
+	updates, err := parseMicrosoftUpdates(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updates) != 1 || updates[0].ID != "OPIM2019" || updates[0].Name != "Microsoft Outlook" || updates[0].AvailableVersion != "16.114.2" {
+		t.Fatalf("%+v", updates)
+	}
+	if _, err = parseMicrosoftUpdates([]byte(`{"Something":{"Other":1}}`)); err == nil {
+		t.Fatal("unrelated dictionaries must not be read as updates")
 	}
 }
