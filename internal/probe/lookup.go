@@ -51,6 +51,90 @@ func lookups(ctx context.Context, r *Report) {
 			r.Lookups = append(r.Lookups, *l)
 		}
 	}
+	if !r.hasVersionedLookup() {
+		genericLookups(ctx, r, installed)
+	}
+}
+
+func (r *Report) hasVersionedLookup() bool {
+	for _, l := range r.Lookups {
+		if l.Version != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// genericLookups runs only when nothing keyed or well-formed answered. It
+// interprets the best vendor-affine candidates by content shape, tries
+// well-known version files beside directory URLs, and HEADs download links.
+// Requests are bounded so the long tail cannot turn into a crawl.
+func genericLookups(ctx context.Context, r *Report, installed string) {
+	tokens := affinityTokens(r)
+	const maxRequests = 8
+	requests := 0
+	tried := map[string]bool{}
+	try := func(u string, f func(context.Context, string) (*Lookup, error)) bool {
+		if requests >= maxRequests || tried[u] {
+			return false
+		}
+		tried[u] = true
+		requests++
+		// Vendor endpoints found in binaries are often parameterised or dead;
+		// a short deadline keeps one of them from spending the whole budget.
+		rctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		defer cancel()
+		l, err := f(rctx, u)
+		if err != nil {
+			r.warn("generic lookup %s: %s", u, err.Error())
+			return false
+		}
+		if l != nil {
+			r.Lookups = append(r.Lookups, *l)
+			return l.Version != ""
+		}
+		return false
+	}
+	var affine []Candidate
+	for _, c := range r.Candidates {
+		if c.Score >= 55 && feedKind(c) == "" && hasAffinity(c.URL, tokens) {
+			affine = append(affine, c)
+		}
+	}
+	for _, c := range affine {
+		if installerExtURL.MatchString(c.URL) {
+			if try(c.URL, func(c context.Context, u string) (*Lookup, error) { return headDownload(c, u, installed) }) {
+				return
+			}
+			continue
+		}
+		if try(c.URL, func(c context.Context, u string) (*Lookup, error) { return interpretGeneric(c, u, installed, tokens) }) {
+			return
+		}
+	}
+	// Explicit directories (trailing slash) first; bare hosts are a weaker guess.
+	var dirs []string
+	for _, c := range affine {
+		if directoryLike(c.URL) && strings.HasSuffix(c.URL, "/") {
+			dirs = append(dirs, c.URL)
+		}
+	}
+	for _, c := range affine {
+		if directoryLike(c.URL) && !strings.HasSuffix(c.URL, "/") {
+			dirs = append(dirs, c.URL)
+		}
+	}
+	if len(dirs) > 2 {
+		dirs = dirs[:2]
+	}
+	for _, d := range dirs {
+		base := strings.TrimRight(d, "/") + "/"
+		for _, f := range wellKnownFiles {
+			if try(base+f, func(c context.Context, u string) (*Lookup, error) { return interpretGeneric(c, u, installed, tokens) }) {
+				return
+			}
+		}
+	}
 }
 
 // feedKind maps a candidate to a parser we can run without page scraping.
@@ -73,11 +157,16 @@ func feedKind(c Candidate) string {
 }
 
 func lookupFeed(ctx context.Context, kind, feed, installed string) (*Lookup, error) {
-	body, _, err := fetchBytes(ctx, feed, "application/atom+xml, application/rss+xml, application/xml, text/xml, text/yaml, */*", 2<<20)
+	body, _, final, err := fetchBytesFinal(ctx, feed, "application/atom+xml, application/rss+xml, application/xml, text/xml, text/yaml, */*", 2<<20)
 	if err != nil {
 		return nil, err
 	}
 	l := &Lookup{Source: kind, URL: feed}
+	if final != feed {
+		// A renamed repository or moved host still answers, but the reader
+		// should know the evidence came from somewhere other than the bundle said.
+		l.Note = "redirected to " + final
+	}
 	switch kind {
 	case "github-releases", "gitlab-tags":
 		title, updated, link, err := latestAtomEntry(body)
@@ -87,6 +176,9 @@ func lookupFeed(ctx context.Context, kind, feed, installed string) (*Lookup, err
 		l.Version, l.Released = title, updated
 		if link != "" {
 			l.URL = link
+		}
+		if prerelease.MatchString(title) {
+			l.Note = strings.TrimPrefix(l.Note+"; pre-release", "; ")
 		}
 	case "sourceforge-files":
 		l.Version, l.Released, l.URL, err = latestSourceForgeFile(body)

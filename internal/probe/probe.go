@@ -196,7 +196,18 @@ func publicHost(ctx context.Context, host string) error {
 	}
 	return nil
 }
+
+// safeClient never follows redirects; callers that want them use redirectingClient.
 func safeClient() *http.Client {
+	c := redirectingClient()
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return c
+}
+
+// redirectingClient follows up to three HTTPS redirects. Every hop is dialled
+// through the same public-address check, so a redirect cannot reach a private
+// host. Renamed GitHub repositories and vendor hosts that moved rely on this.
+func redirectingClient() *http.Client {
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	tr := &http.Transport{Proxy: nil, DisableKeepAlives: true, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)
@@ -221,42 +232,62 @@ func safeClient() *http.Client {
 		// Pin the resolved public address; do not perform a second DNS lookup in DialContext.
 		return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
 	}}
-	return &http.Client{Timeout: 20 * time.Second, Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return &http.Client{Timeout: 20 * time.Second, Transport: tr, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 3 {
+			return errors.New("too many redirects")
+		}
+		if req.URL.Scheme != "https" || req.URL.User != nil {
+			return errors.New("redirect to non-HTTPS URL blocked")
+		}
+		return nil
+	}}
 }
 
-// fetchBytes retrieves a bounded public HTTPS resource without following redirects.
+// fetchBytes retrieves a bounded public HTTPS resource, following up to three
+// HTTPS redirects.
 var fetchBytes = func(ctx context.Context, raw, accept string, max int) ([]byte, string, error) {
+	body, ct, _, err := fetchBytesFinal(ctx, raw, accept, max)
+	return body, ct, err
+}
+
+// fetchBytesFinal also reports the URL that answered, so callers can tell
+// when a redirect moved them to a different project or host.
+var fetchBytesFinal = func(ctx context.Context, raw, accept string, max int) ([]byte, string, string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil {
-		return nil, "", errors.New("only HTTPS public URLs allowed")
+		return nil, "", "", errors.New("only HTTPS public URLs allowed")
 	}
 	if err = publicHost(ctx, u.Hostname()); err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 	req.Header.Set("User-Agent", "macup-probe/0.1")
 	if accept != "" {
 		req.Header.Set("Accept", accept)
 	}
-	res, err := safeClient().Do(req)
+	res, err := redirectingClient().Do(req)
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 	defer res.Body.Close()
+	final := raw
+	if res.Request != nil && res.Request.URL != nil {
+		final = res.Request.URL.String()
+	}
 	if res.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("HTTP %d", res.StatusCode)
+		return nil, "", final, fmt.Errorf("HTTP %d", res.StatusCode)
 	}
 	b, err := io.ReadAll(io.LimitReader(res.Body, int64(max)+1))
 	if err != nil {
-		return nil, "", err
+		return nil, "", final, err
 	}
 	if len(b) > max {
-		return nil, "", fmt.Errorf("response exceeds %d bytes", max)
+		return nil, "", final, fmt.Errorf("response exceeds %d bytes", max)
 	}
-	return b, strings.ToLower(res.Header.Get("Content-Type")), nil
+	return b, strings.ToLower(res.Header.Get("Content-Type")), final, nil
 }
 
 func Fetch(ctx context.Context, raw string) (Page, error) {

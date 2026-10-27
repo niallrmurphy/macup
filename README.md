@@ -264,8 +264,13 @@ its flag is set, except the first two, which are local and read-only:
    (`families`: Sparkle, Squirrel, Keystone, Setapp, Paddle, DevMate, Electron);
    electron-updater's `app-update.yml`; `package.json` inside `app.asar`
    (homepage, repository, publish targets); Mozilla's `application.ini`
-   update template; and a bounded scan of the main executable for literal
-   update-flavoured HTTPS URLs. Nothing in the bundle is executed.
+   update template; and a bounded scan of the main executable, other
+   binaries, plug-ins and JavaScript bundles for literal HTTPS URLs. Update
+   endpoints live in dylibs as often as in the main executable. URLs are
+   ranked by *affinity*: whether the host or path names the product, the
+   bundle identifier's labels, or the signing organisation. Dependency
+   documentation hosts without affinity are dropped. Nothing in the bundle
+   is executed.
 2. **Local OS records.** The app's own preferences (`SUFeedURL` set at run
    time), vendor updater jobs in `/Library/LaunchAgents` and
    `/Library/LaunchDaemons`, and the code signature (`signer`, `team_id`).
@@ -288,7 +293,18 @@ its flag is set, except the first two, which are local and read-only:
    Mozilla update server). Each produces a `lookups` entry with `comparison`
    of `newer`, `same`, `older`, `unknown` (numbering schemes differ), or
    `none-offered` (the vendor's update server answered with no update for this
-   exact build).
+   exact build). When none of those answered, a bounded generic pass (at most
+   eight requests, eight seconds each) interprets the best vendor-affine
+   candidates by shape rather than by vendor: JSON under conventional keys
+   (`version`, `tag_name`), XML version attributes or elements, short
+   plain-text version files, YAML manifests, and HTML pages listing
+   versioned Mac installers whose filename names the product. Beside
+   directory URLs it tries well-known files such as `LATEST.TXT`,
+   `appcast.xml` and `latest-mac.yml`; for stable download links it issues a
+   HEAD and reads the version from the redirect target or served filename.
+   Redirects are followed up to three hops over HTTPS only, every hop passing
+   the same public-address check, and a lookup that landed somewhere other
+   than the bundle said carries a `redirected to` note.
 6. **`--fetch`** and **`--model`** interpret candidate pages, as below.
 
 A `newer` lookup is a strong hint, not a verdict: App Store and Homebrew may

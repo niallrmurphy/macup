@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -63,17 +62,12 @@ func inspectBundle(ctx context.Context, r *Report, fields map[string]string) {
 	if exe == "" {
 		exe = strings.TrimSuffix(filepath.Base(path), ".app")
 	}
-	if r.strongest() < 90 {
-		urls, err := scanExecutableURLs(filepath.Join(path, "Contents", "MacOS", exe), 96<<20)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			r.warn("executable scan: %s", err.Error())
-		}
-		for _, u := range urls {
-			add(r, u.URL, "executable", u.Score)
-		}
+	if r.strongest() < 90 && !r.hasFamily("mas-receipt") {
+		scanBundleURLs(r, path, exe)
 	}
-	for _, c := range r.Candidates {
-		if forgeTrusted(c) {
+	tokens := affinityTokens(r)
+	for _, c := range append([]Candidate{}, r.Candidates...) {
+		if forgeTrusted(c, tokens) {
 			deriveForgeFeeds(r, c.URL)
 		}
 	}
@@ -207,7 +201,7 @@ func normaliseRepo(s string) string {
 	return ""
 }
 
-var forgeHosts = map[string]bool{"github.com": true, "gitlab.com": true}
+var forgeHosts = map[string]bool{"github.com": true, "gitlab.com": true, "api.github.com": true}
 var forgeReserved = map[string]bool{"sponsors": true, "features": true, "orgs": true, "apps": true, "marketplace": true, "site": true, "login": true, "settings": true, "explore": true, "topics": true, "about": true, "pricing": true, "groups": true, "users": true, "help": true}
 
 // forgeRepo returns host, owner and repo for GitHub or GitLab project URLs.
@@ -217,17 +211,29 @@ func forgeRepo(raw string) (host, owner, repo string, ok bool) {
 		return "", "", "", false
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	host = u.Hostname()
+	if host == "api.github.com" {
+		// api.github.com/repos/{owner}/{repo}/...
+		if len(parts) < 3 || parts[0] != "repos" {
+			return "", "", "", false
+		}
+		parts = parts[1:]
+		host = "github.com"
+	}
 	if len(parts) < 2 || forgeReserved[parts[0]] || parts[1] == "" || strings.HasPrefix(parts[1], "-") {
 		return "", "", "", false
 	}
-	return u.Hostname(), parts[0], strings.TrimSuffix(parts[1], ".git"), true
+	return host, parts[0], strings.TrimSuffix(parts[1], ".git"), true
 }
 
 // forgeTrusted limits feed derivation to evidence that names this product's
 // own project. Executables embed URLs of every dependency they link.
-func forgeTrusted(c Candidate) bool {
+func forgeTrusted(c Candidate, tokens []string) bool {
 	switch {
-	case c.Source == "executable", strings.HasPrefix(c.Source, "lookup:"):
+	case c.Source == "executable", strings.HasPrefix(c.Source, "binary:"):
+		// Binaries embed URLs of every dependency they link; the repo must name the product.
+		return hasAffinity(c.URL, tokens)
+	case strings.HasPrefix(c.Source, "lookup:"):
 		return false
 	case strings.HasPrefix(c.Source, "Info.plist:"):
 		return c.Score >= 65
@@ -315,18 +321,122 @@ func init() {
 }
 
 var updateKeywords = regexp.MustCompile(`(?i)(appcast|sparkle|update|release|changelog|version|download|latest|github\.com|gitlab\.com|sourceforge\.net)`)
-var strongKeywords = regexp.MustCompile(`(?i)(appcast|sparkle|update)`)
+var strongKeywords = regexp.MustCompile(`(?i)(appcast|sparkle|update|versions?\.(xml|json|txt)|release\.json|latest\.(txt|json|yml)|/releases)`)
+var dependencyPaths = regexp.MustCompile(`(?i)\.(dtd|rpm|deb|tar\.gz|tgz|h)$`)
+
+// Bundle-wide scan limits: update endpoints live in dylibs, plug-ins and
+// JavaScript bundles as often as in the main executable, but some bundles
+// hold gigabytes of binaries.
+const (
+	scanMaxFiles   = 300
+	scanMaxTotal   = 384 << 20
+	scanMaxPerFile = 64 << 20
+	scanMaxURLs    = 20
+)
+
+var scanDirs = []string{"Contents/MacOS", "Contents/Frameworks", "Contents/PlugIns", "Contents/Library", "Contents/Helpers", "Contents/Resources"}
+var scanTextExt = map[string]bool{".dylib": true, ".so": true, ".js": true, ".json": true, ".xml": true, ".yml": true, ".yaml": true, ".ini": true, ".cfg": true, ".txt": true, ".strings": true}
+
+// scanBundleURLs streams the main executable and then other binaries and
+// text resources, ranking URLs by whether their host or path names the
+// vendor or product. Nothing is executed.
+func scanBundleURLs(r *Report, path, exe string) {
+	tokens := affinityTokens(r)
+	main := filepath.Join(path, "Contents", "MacOS", exe)
+	files := []string{main}
+	var total int64
+	for _, dir := range scanDirs {
+		base := filepath.Join(path, filepath.FromSlash(dir))
+		filepath.WalkDir(base, func(p string, d os.DirEntry, err error) error {
+			if err != nil || len(files) >= scanMaxFiles {
+				return filepath.SkipDir
+			}
+			if d.IsDir() {
+				if strings.Count(strings.TrimPrefix(p, base), string(os.PathSeparator)) > 5 {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if d.Type()&os.ModeSymlink != 0 || p == main {
+				return nil
+			}
+			info, e := d.Info()
+			if e != nil || info.Size() < 1024 {
+				return nil
+			}
+			ext := strings.ToLower(filepath.Ext(p))
+			if !scanTextExt[ext] && info.Mode()&0o111 == 0 && (ext != "" || !strings.Contains(p, "/Frameworks/")) {
+				return nil
+			}
+			files = append(files, p)
+			return nil
+		})
+	}
+	seen := map[string]bool{}
+	found := 0
+	for _, f := range files {
+		if total >= scanMaxTotal || found >= scanMaxURLs {
+			break
+		}
+		urls, err := scanExecutableURLs(f, scanMaxPerFile)
+		if err != nil {
+			continue
+		}
+		if info, e := os.Stat(f); e == nil {
+			total += info.Size()
+		}
+		source := "executable"
+		if f != main {
+			source = "binary:" + filepath.Base(f)
+		}
+		for _, u := range urls {
+			if seen[u.URL] {
+				continue
+			}
+			seen[u.URL] = true
+			score, ok := rankBundleURL(u.URL, tokens)
+			if !ok {
+				continue
+			}
+			add(r, u.URL, source, score)
+			found++
+		}
+	}
+}
+
+// rankBundleURL scores a URL found in a binary. Affinity with the vendor or
+// product outranks keywords; URLs with neither affinity nor a strong
+// update keyword, or from well-known third-party hosts, are dropped.
+func rankBundleURL(u string, tokens []string) (int, bool) {
+	if dependencyPaths.MatchString(u) {
+		return 0, false
+	}
+	affinity := hasAffinity(u, tokens)
+	strong := strongKeywords.MatchString(u)
+	switch {
+	case affinity && strong:
+		return 80, true
+	case affinity:
+		return 55, true
+	case noisyHost(u):
+		return 0, false
+	case strong:
+		return 60, true
+	}
+	return 35, true
+}
+
 var templateMarkers = []string{"%@", "%s", "%d", "%l", "%u", "{", "}"}
 
 // scanExecutableURLs streams the main executable looking for literal HTTPS
 // URLs. Nothing is executed; only update-flavoured URLs are kept.
-func scanExecutableURLs(path string, max int64) ([]Candidate, error) {
+func scanExecutableURLs(path string, max int) ([]Candidate, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	rd := bufio.NewReaderSize(io.LimitReader(f, max), 1<<20)
+	rd := bufio.NewReaderSize(io.LimitReader(f, int64(max)), 1<<20)
 	seen := map[string]bool{}
 	var out []Candidate
 	needle := []byte("https://")
@@ -360,11 +470,7 @@ func scanExecutableURLs(path string, max int64) ([]Candidate, error) {
 		if skip {
 			continue
 		}
-		score := 55
-		if strongKeywords.MatchString(u) {
-			score = 80
-		}
-		out = append(out, Candidate{URL: u, Source: "executable", Score: score})
+		out = append(out, Candidate{URL: u, Source: "executable"})
 	}
 	return out, nil
 }

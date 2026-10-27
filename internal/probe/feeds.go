@@ -45,9 +45,13 @@ func latestAtomEntry(body []byte) (title, updated, link string, err error) {
 		}
 	}
 	title = strings.TrimSpace(e.Title)
-	if title == "" {
-		if i := strings.LastIndex(e.ID, "/"); i >= 0 {
-			title = e.ID[i+1:]
+	// Titles are free text ("4.0.4 release"); the tag at the end of the link or ID is exact.
+	for _, ref := range []string{link, e.ID} {
+		if i := strings.LastIndex(ref, "/"); i >= 0 && i+1 < len(ref) {
+			if tag := ref[i+1:]; looksLikeVersion.MatchString(strings.TrimLeft(tag, "vV")) || strings.ContainsAny(tag, "0123456789") {
+				title = tag
+				break
+			}
 		}
 	}
 	for {

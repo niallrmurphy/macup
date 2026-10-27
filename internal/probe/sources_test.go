@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/niallrmurphy/macup/internal/inventory"
@@ -60,9 +61,11 @@ func TestForgeFeedsOnlyFromTrustedSources(t *testing.T) {
 	add(&r, "https://github.com/acme/widget/issues", "Info.plist:VendorURL", 65)
 	add(&r, "https://github.com/sponsors/x", "Info.plist:VendorURL", 65)
 	add(&r, "https://github.com/dep/lib", "executable", 55)
+	add(&r, "https://github.com/dep/other-lib", "binary:libfoo.dylib", 35)
+	add(&r, "https://api.github.com/repos/acme/widgetapp/releases/latest", "binary:bundle.js", 80)
 	add(&r, "https://gitlab.com/inkscape/inkscape", "Info.plist:CIProjectUrl", 65)
 	for _, c := range append([]Candidate{}, r.Candidates...) {
-		if forgeTrusted(c) {
+		if forgeTrusted(c, []string{"widgetapp"}) {
 			deriveForgeFeeds(&r, c.URL)
 		}
 	}
@@ -70,10 +73,10 @@ func TestForgeFeedsOnlyFromTrustedSources(t *testing.T) {
 	for _, c := range r.Candidates {
 		urls[c.URL] = true
 	}
-	if !urls["https://github.com/acme/widget/releases.atom"] || !urls["https://gitlab.com/inkscape/inkscape/-/tags?format=atom"] {
+	if !urls["https://github.com/acme/widget/releases.atom"] || !urls["https://gitlab.com/inkscape/inkscape/-/tags?format=atom"] || !urls["https://github.com/acme/widgetapp/releases.atom"] {
 		t.Fatalf("%+v", r.Candidates)
 	}
-	if urls["https://github.com/dep/lib/releases.atom"] || urls["https://github.com/sponsors/x/releases.atom"] {
+	if urls["https://github.com/dep/lib/releases.atom"] || urls["https://github.com/sponsors/x/releases.atom"] || urls["https://github.com/dep/other-lib/releases.atom"] {
 		t.Fatalf("untrusted feed derived: %+v", r.Candidates)
 	}
 }
@@ -107,8 +110,72 @@ func TestScanExecutableURLs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].URL != "https://get.example.com/appcast.xml" || got[0].Score != 80 || got[1].URL != "https://example.com/download/v2" || got[1].Score != 55 {
+	if len(got) != 2 || got[0].URL != "https://get.example.com/appcast.xml" || got[1].URL != "https://example.com/download/v2" {
 		t.Fatalf("%+v", got)
+	}
+	tokens := []string{"example"}
+	if sc, ok := rankBundleURL("https://get.example.com/appcast.xml", tokens); !ok || sc != 80 {
+		t.Fatal("affine strong", sc, ok)
+	}
+	if sc, ok := rankBundleURL("https://example.com/privacy", tokens); !ok || sc != 55 {
+		t.Fatal("affine weak", sc, ok)
+	}
+	if _, ok := rankBundleURL("https://nodejs.org/download/release/v14.tar.gz", tokens); ok {
+		t.Fatal("dependency noise kept")
+	}
+	if _, ok := rankBundleURL("https://docs.aws.amazon.com/general/latest/gr/rande.html", tokens); ok {
+		t.Fatal("noise host kept")
+	}
+	if sc, ok := rankBundleURL("https://cdn.vendor.test/autoupdate/table.xml", tokens); !ok || sc != 60 {
+		t.Fatal("strong without affinity", sc, ok)
+	}
+}
+
+func TestAffinityTokens(t *testing.T) {
+	r := Report{Application: inventory.Application{Name: "Task Manager TMOG", BundleID: "com.tmog.taskmanager"}, Signer: "David Plummer"}
+	tokens := affinityTokens(&r)
+	want := map[string]bool{"taskmanagertmog": true, "task": true, "manager": true, "tmog": true, "taskmanager": true, "david": true, "plummer": true}
+	for _, tok := range tokens {
+		if !want[tok] {
+			t.Fatalf("unexpected token %q in %v", tok, tokens)
+		}
+	}
+	if !hasAffinity("https://www.tmog.org/downloads/release.json", tokens) || hasAffinity("https://nodejs.org/download/", tokens) {
+		t.Fatal("affinity")
+	}
+}
+
+func TestGenericInterpreters(t *testing.T) {
+	v, rel := jsonVersion([]byte(`{"schemaVersion":1,"platform":"macOS","version":"1.1.0","build":"2026","releaseNotes":"x"}`))
+	if v != "1.1.0" || rel != "" {
+		t.Fatal(v, rel)
+	}
+	v, rel = jsonVersion([]byte(`{"html_url":"x","tag_name":"v0.1.0-beta.6","published_at":"2017-01-01T00:00:00Z","assets":[{"name":"DBGlass-0.1.0.dmg"}]}`))
+	if v != "v0.1.0-beta.6" || rel != "2017-01-01T00:00:00Z" {
+		t.Fatal(v, rel)
+	}
+	if v, _ = jsonVersion([]byte(`{"name":"not a version"}`)); v != "" {
+		t.Fatal(v)
+	}
+	if v, _ = xmlVersion([]byte(`<updates><update appVersion="158.0.1"/></updates>`)); v != "158.0.1" {
+		t.Fatal(v)
+	}
+	if v, _ = xmlVersion([]byte(`<root><latest>2.4.1</latest></root>`)); v != "2.4.1" {
+		t.Fatal(v)
+	}
+	if v := textVersion([]byte("7.2.22\n")); v != "7.2.22" {
+		t.Fatal(v)
+	}
+	if v := textVersion([]byte("<html>7.2.22</html>")); v != "" {
+		t.Fatal(v)
+	}
+	page := []byte(`<a href="2.1/oscar20_2.1.0-Intel.dmg">x</a> <a href="https://www.sleepfiles.com/OSCAR/2.1/OSCAR-2.1.0-ARM.dmg">y</a> <a href="/OSCAR/1.5/OSCAR-1.5.1-win64.exe">w</a> <a href="/other/Thing-9.9.9.dmg">z</a>`)
+	v, link := htmlInstallerVersion(page, "https://www.sleepfiles.com/OSCAR/", []string{"oscar"})
+	if v != "2.1.0" || !strings.HasPrefix(link, "https://www.sleepfiles.com/OSCAR/2.1/") {
+		t.Fatal(v, link)
+	}
+	if !directoryLike("https://download.virtualbox.org/virtualbox/") || !directoryLike("https://update.virtualbox.org") || directoryLike("https://x.example/release.json") || directoryLike("https://x.example/q?x=1") || directoryLike("https://github.com/a/b/wiki/Page") {
+		t.Fatal("directoryLike")
 	}
 }
 
@@ -308,6 +375,10 @@ func TestFeedParsers(t *testing.T) {
 	title, updated, link, err := latestAtomEntry(atom)
 	if err != nil || title != "v1.9.0" || updated != "2025-12-01T00:00:00Z" || link != "https://github.com/a/b/releases/tag/v1.9.0" {
 		t.Fatal(title, updated, link, err)
+	}
+	free := []byte(`<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>tag:github.com,2008:Repository/1/4.0.4</id><link rel="alternate" href="https://github.com/a/b/releases/tag/4.0.4"/><title>4.0.4 release</title><updated>u</updated></entry></feed>`)
+	if title, _, _, _ = latestAtomEntry(free); title != "4.0.4" {
+		t.Fatal(title)
 	}
 	gl := []byte(`<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>x</id><title>INKSCAPE_1_4_4</title><updated>u</updated></entry></feed>`)
 	if title, _, _, _ = latestAtomEntry(gl); title != "INKSCAPE.1.4.4" && title != "INKSCAPE_1.4.4" {
