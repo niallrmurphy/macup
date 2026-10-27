@@ -27,7 +27,6 @@ func run(args []string) int {
 		fetch := fs.Bool("fetch", false, "fetch up to three candidate public HTTPS pages per app")
 		lookup := fs.Bool("lookup", false, "query keyed public sources: App Store catalogue, Homebrew cask index, release feeds")
 		origins := fs.Bool("origins", false, "read local download-origin records (quarantine database, Spotlight where-froms)")
-		search := fs.String("search", "", "last-resort search backend, used only when all other sources are empty: brave (requires BRAVE_SEARCH_API_KEY)")
 		model := fs.String("model", "", "optional local Ollama model (requires --fetch)")
 		pages := fs.Int("max-pages", 3, "maximum pages per app (1 to 3)")
 		all := fs.Bool("all", false, "probe every discovered application")
@@ -45,15 +44,7 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, "--model requires --fetch")
 			return 2
 		}
-		if *search != "" && *search != "brave" {
-			fmt.Fprintln(os.Stderr, "--search must be brave")
-			return 2
-		}
-		if *search == "brave" && os.Getenv("BRAVE_SEARCH_API_KEY") == "" {
-			fmt.Fprintln(os.Stderr, "--search=brave requires BRAVE_SEARCH_API_KEY")
-			return 2
-		}
-		opt := probe.Options{Search: *search, Fetch: *fetch, Lookup: *lookup, Origins: *origins, Model: *model, MaxPages: *pages}
+		opt := probe.Options{Fetch: *fetch, Lookup: *lookup, Origins: *origins, Model: *model, MaxPages: *pages}
 		if *all {
 			if fs.NArg() != 0 {
 				fmt.Fprintln(os.Stderr, "--all cannot be combined with an application path")
@@ -73,7 +64,7 @@ func run(args []string) int {
 			return 0
 		}
 		if fs.NArg() != 1 || *roots != "" || *includeSystem {
-			fmt.Fprintln(os.Stderr, "usage: macup probe [--all [--roots DIRS] [--include-system]] [--lookup] [--origins] [--fetch] [--search brave] [--model MODEL] [--max-pages 1..3] [--workers 1..4] [APP.app]")
+			fmt.Fprintln(os.Stderr, "usage: macup probe [--all [--roots DIRS] [--include-system]] [--lookup] [--origins] [--fetch] [--model MODEL] [--max-pages 1..3] [--workers 1..4] [APP.app]")
 			return 2
 		}
 		r, err := probe.Run(context.Background(), fs.Arg(0), opt)

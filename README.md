@@ -274,10 +274,7 @@ its flag is set, except the first two, which are local and read-only:
    of `newer`, `same`, `older`, `unknown` (numbering schemes differ), or
    `none-offered` (the vendor's update server answered with no update for this
    exact build).
-6. **`--search=brave`** runs last and only when every stage above produced
-   nothing usable: no candidate scored 80 or higher, no versioned lookup, and
-   the bundle is not App Store, web-app, helper, or Setapp managed.
-7. **`--fetch`** and **`--model`** interpret candidate pages, as below.
+6. **`--fetch`** and **`--model`** interpret candidate pages, as below.
 
 A `newer` lookup is a strong hint, not a verdict: App Store and Homebrew may
 lag or lead the vendor's direct channel, and a GitHub feed may list a build
@@ -313,25 +310,3 @@ Network fetching and Ollama remain explicit opt-ins. `--workers` is bounded
 to 1–4, and `--max-pages` to 1–3 per app. Even at those limits, a full
 Ollama-backed run can take substantial time and make many HTTPS requests.
 The probe never alters `scan` statuses or installs anything.
-
-### Optional search-led discovery (experimental)
-
-`probe --search=brave` uses the Brave Web Search API to find candidate release
-and download pages. It is the last resort: it runs only when no stage above
-found a strong candidate, a versioned lookup, or a managing party.
-It is separate from `scan`, and does not treat search snippets as evidence of
-an available update. Up to five search-result URLs are recorded with source
-`search:brave`; `--fetch` must be explicitly enabled to inspect those pages.
-Results remain unverified until corroborated against the actual publisher and
-version information. The API key is read only from `BRAVE_SEARCH_API_KEY`.
-
-```sh
-export BRAVE_SEARCH_API_KEY='your-key'
-./macup probe --all --search=brave --fetch --workers 1 > probe-search-results.json
-./macup probe --search=brave --fetch --model llama3.2:latest '/Applications/Nisus Writer Pro.app'
-```
-
-Search is **opt-in**, sends app display names as search queries to Brave, and
-can incur API charges. It may produce approximately one search request for
-each app without a strong embedded update URL. Review the resulting candidate
-URLs before trusting any LLM interpretation.

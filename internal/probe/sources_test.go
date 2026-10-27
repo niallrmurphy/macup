@@ -264,29 +264,6 @@ func TestClassify(t *testing.T) {
 	}
 }
 
-func TestNeedsSearchIsLastResort(t *testing.T) {
-	r := Report{}
-	if !needsSearch(&r) {
-		t.Fatal("empty report should allow search")
-	}
-	r.Candidates = []Candidate{{URL: "https://x.example/appcast.xml", Source: "Info.plist:SUFeedURL", Score: 90}}
-	if needsSearch(&r) {
-		t.Fatal("strong candidate should suppress search")
-	}
-	r = Report{Lookups: []Lookup{{Source: "itunes", Version: "1.0"}}}
-	if needsSearch(&r) {
-		t.Fatal("versioned lookup should suppress search")
-	}
-	r = Report{Management: &Management{Kind: "helper"}}
-	if needsSearch(&r) {
-		t.Fatal("helper should suppress search")
-	}
-	r = Report{Management: &Management{Kind: "vendor"}}
-	if !needsSearch(&r) {
-		t.Fatal("vendor-managed without evidence may still search")
-	}
-}
-
 func TestParseITunes(t *testing.T) {
 	l, err := parseITunes([]byte(`{"resultCount":1,"results":[{"trackName":"Magnet","version":"3.0.7","currentVersionReleaseDate":"2025-04-12T02:54:13Z","sellerUrl":"https://magnet.crowdcafe.com","trackViewUrl":"https://apps.apple.com/x"}]}`), "3.0.6")
 	if err != nil || l == nil || l.Version != "3.0.7" || l.Comparison != "newer" || l.Note != "https://magnet.crowdcafe.com" {

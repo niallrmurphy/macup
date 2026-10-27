@@ -57,20 +57,3 @@ func TestHTMLSnippets(t *testing.T) {
 		t.Fatal(text)
 	}
 }
-
-func TestSearchResultsOnlyAddHTTPSCandidates(t *testing.T) {
-	r := Report{Candidates: []Candidate{}}
-	body := []byte(`{"web":{"results":[{"url":"https://vendor.example/releases","title":"Release Notes"},{"url":"http://unsafe.example/","title":"Download"},{"url":"https://vendor.example/releases","title":"Duplicate"}]}}`)
-	if err := addBraveResults(&r, body); err != nil {
-		t.Fatal(err)
-	}
-	if len(r.Candidates) != 1 || r.Candidates[0].Source != "search:brave" {
-		t.Fatalf("%+v", r.Candidates)
-	}
-}
-func TestSearchResultsInvalidJSON(t *testing.T) {
-	r := Report{}
-	if err := addBraveResults(&r, []byte("not json")); err == nil {
-		t.Fatal("expected error")
-	}
-}

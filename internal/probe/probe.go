@@ -79,7 +79,6 @@ type Report struct {
 	Warnings    []string              `json:"warnings,omitempty"`
 }
 type Options struct {
-	Search   string
 	Fetch    bool
 	Lookup   bool
 	Origins  bool
@@ -299,29 +298,9 @@ func htmlText(s string) string {
 	return spaces.ReplaceAllString(s, " ")
 }
 
-// needsSearch decides whether the last-resort web search is justified: only
-// when nothing local, derived, or keyed has produced a usable update source.
-func needsSearch(r *Report) bool {
-	if r.strongest() >= 80 {
-		return false
-	}
-	for _, l := range r.Lookups {
-		if l.Version != "" {
-			return false
-		}
-	}
-	if r.Management != nil {
-		switch r.Management.Kind {
-		case "appstore", "pwa", "helper", "setapp":
-			return false
-		}
-	}
-	return true
-}
-
 // Run evaluates evidence in order of cost and trust: bundle contents, local OS
-// records, keyed public lookups, and only then web search, page fetches and a
-// local model. Search and the model are opt-in and run last.
+// records, keyed public lookups, and only then page fetches and a local model.
+// Lookups, fetches and the model are opt-in.
 func Run(ctx context.Context, path string, opt Options) (Report, error) {
 	r, fields, err := discover(path)
 	if err != nil {
@@ -338,16 +317,6 @@ func Run(ctx context.Context, path string, opt Options) (Report, error) {
 	}
 	if opt.Lookup {
 		lookups(ctx, &r)
-	}
-	if opt.Search != "" {
-		if opt.Search != "brave" {
-			return r, fmt.Errorf("unsupported search backend %q", opt.Search)
-		}
-		if needsSearch(&r) {
-			if e := SearchBrave(ctx, &r); e != nil {
-				r.warn("search (brave): %s", e.Error())
-			}
-		}
 	}
 	sortCandidates(&r)
 	if opt.Fetch {

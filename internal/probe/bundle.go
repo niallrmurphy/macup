@@ -227,7 +227,7 @@ func forgeRepo(raw string) (host, owner, repo string, ok bool) {
 // own project. Executables embed URLs of every dependency they link.
 func forgeTrusted(c Candidate) bool {
 	switch {
-	case c.Source == "executable", strings.HasPrefix(c.Source, "lookup:"), strings.HasPrefix(c.Source, "search:"):
+	case c.Source == "executable", strings.HasPrefix(c.Source, "lookup:"):
 		return false
 	case strings.HasPrefix(c.Source, "Info.plist:"):
 		return c.Score >= 65
