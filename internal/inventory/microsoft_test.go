@@ -32,6 +32,11 @@ func TestMicrosoftScanAndApply(t *testing.T) {
 		t.Fatalf("bad result: %+v", result)
 	}
 	r := Result{Microsoft: &result, Entries: []Entry{{Name: "Microsoft Word", Path: "/Applications/Microsoft Word.app", Installed: "16.114.1", Status: "NO SOURCE", Sources: []string{"apps"}}}}
+	defer func() {
+		if e := r.Entries[0]; len(e.Sources) != 2 || e.Sources[1] != "microsoft" {
+			t.Fatalf("provider should appear in SOURCE: %+v", e)
+		}
+	}()
 	ApplyMicrosoft(&r)
 	if len(r.Entries) != 2 || r.Entries[0].Status != "OUTDATED" || r.Entries[0].UpdateSource != "microsoft-autoupdate" {
 		t.Fatalf("bad entries: %+v", r.Entries)

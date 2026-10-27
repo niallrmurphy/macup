@@ -327,5 +327,8 @@ func ApplyAdobe(r *Result) {
 			e.UpdateSource = "adobe-catalog"
 			e.Detail = "catalogue includes installed version; eligibility not checked"
 		}
+		if e.UpdateSource == "adobe-catalog" {
+			e.Sources = appendSource(e.Sources, "adobe")
+		}
 	}
 }

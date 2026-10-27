@@ -121,3 +121,14 @@ func TestTablePathsOptional(t *testing.T) {
 		t.Fatal(s)
 	}
 }
+
+func TestDisplayVersion(t *testing.T) {
+	for in, want := range map[string]string{"XQuartz-2.8.6": "2.8.6", "v1.2": "1.2", "1.170.0 (89123)": "1.170.0 (89123)", "Version 2": "Version 2", "latest": "latest"} {
+		if got := displayVersion(in); got != want {
+			t.Errorf("%q: got %q want %q", in, got, want)
+		}
+	}
+	if availableLabel("XQuartz-2.8.6", "OUTDATED") != "2.8.6" {
+		t.Fatal("availableLabel should display the trimmed version")
+	}
+}

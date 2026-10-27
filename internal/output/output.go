@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -164,7 +165,7 @@ func nonempty(v string) string {
 // known, not whether a provider happened to populate a string field.
 func availableLabel(version, status string) string {
 	if version != "" {
-		return version
+		return displayVersion(version)
 	}
 	switch status {
 	case "CURRENT", "NOT FLAGGED":
@@ -172,4 +173,21 @@ func availableLabel(version, status string) string {
 	default:
 		return "?" // no reliable available-version information
 	}
+}
+
+var versionStart = regexp.MustCompile(`\d`)
+
+// displayVersion trims a product name or "v" that some feeds put in front of
+// the number ("XQuartz-2.8.6", "v1.2"), keeping anything after it such as a
+// build in parentheses. Comparison code works on the raw string.
+func displayVersion(v string) string {
+	i := versionStart.FindStringIndex(v)
+	if i == nil || i[0] == 0 {
+		return v
+	}
+	prefix := v[:i[0]]
+	if strings.Contains(prefix, " ") {
+		return v // "Version 2" style text is left alone
+	}
+	return v[i[0]:]
 }

@@ -190,6 +190,7 @@ func ApplyMicrosoft(r *Result) {
 		if mauCoveredEntry(*e) && e.Status == "NO SOURCE" {
 			e.Status = "CURRENT"
 			e.UpdateSource = "microsoft-autoupdate"
+			e.Sources = appendSource(e.Sources, "microsoft")
 		}
 	}
 	// Only match an app that was actually discovered. Avoid attaching updates
@@ -218,6 +219,7 @@ func ApplyMicrosoft(r *Result) {
 				e.Available = u.AvailableVersion
 				e.Status = "OUTDATED"
 				e.UpdateSource = "microsoft-autoupdate"
+				e.Sources = appendSource(e.Sources, "microsoft")
 			}
 		} else {
 			r.Entries = append(r.Entries, Entry{Name: u.Name, Available: u.AvailableVersion, Status: "OUTDATED", UpdateSource: "microsoft-autoupdate", Sources: []string{"microsoft-autoupdate"}, Detail: "id:" + u.ID})

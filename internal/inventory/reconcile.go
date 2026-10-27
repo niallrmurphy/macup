@@ -124,3 +124,14 @@ func updateSource(outdated bool, source string) string {
 	}
 	return ""
 }
+
+// appendSource records a provider in SOURCE once, so a row reads
+// apps+sparkle or apps+microsoft the same way whichever provider spoke.
+func appendSource(sources []string, source string) []string {
+	for _, s := range sources {
+		if s == source {
+			return sources
+		}
+	}
+	return append(sources, source)
+}

@@ -197,9 +197,6 @@ func run(args []string) int {
 			// Feeds set in code or in user defaults are invisible to Info.plist alone.
 			inventory.SparkleFeedFinder = probe.SparkleFeed
 			var progress inventory.SparkleProgressFunc
-			if !*quietFlag || *debugFlag || *debugXMLDir != "" {
-				fmt.Fprintf(os.Stderr, "Sparkle: examining %d applications for update feeds\n", len(result.Applications))
-			}
 			// Per-feed lines are noisy once the checker is trusted; the summary below stays.
 			if *verboseFlag || *debugFlag || *debugXMLDir != "" {
 				progress = func(e inventory.SparkleProgress) {
@@ -237,8 +234,13 @@ func run(args []string) int {
 					reused = append(reused, c)
 				}
 			}
-			if len(reused)+noFeed > 0 {
-				announce("Sparkle: %d feed results and %d no-feed results reused from cache; inspecting %d applications", len(reused), noFeed, len(toCheck))
+			switch {
+			case len(reused)+noFeed > 0 && len(toCheck) == 0:
+				announce("Sparkle: all %d applications served from cache (%d feeds, %d without one)", len(reused)+noFeed, len(reused), noFeed)
+			case len(reused)+noFeed > 0:
+				announce("Sparkle: %d applications served from cache; examining %d for update feeds", len(reused)+noFeed, len(toCheck))
+			default:
+				announce("Sparkle: examining %d applications for update feeds", len(toCheck))
 			}
 			var s inventory.SparkleResult
 			if *debugXMLDir != "" {
