@@ -33,15 +33,17 @@ func classify(r *Report, fields map[string]string) {
 	if r.Management != nil {
 		return
 	}
-	for _, f := range r.Families {
-		if strings.HasPrefix(f, "launch-agent:") {
-			r.Management = &Management{"vendor", "vendor updater job " + strings.TrimPrefix(f, "launch-agent:")}
-			return
-		}
-	}
+	// An embedded updater is specific to this bundle; a vendor-wide agent
+	// (Microsoft AutoUpdate, Keystone) may or may not cover it.
 	for _, f := range selfFamilies {
 		if r.hasFamily(f) {
 			r.Management = &Management{"self", "embedded updater: " + f}
+			return
+		}
+	}
+	for _, f := range r.Families {
+		if strings.HasPrefix(f, "launch-agent:") {
+			r.Management = &Management{"vendor", "vendor updater job " + strings.TrimPrefix(f, "launch-agent:")}
 			return
 		}
 	}

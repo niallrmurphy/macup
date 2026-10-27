@@ -252,6 +252,9 @@ func checkSparkle(ctx context.Context, apps []Application, fetch AppcastFetcher,
 			continue
 		}
 		feed := strings.TrimSpace(m["SUFeedURL"])
+		if feed == "" && SparkleFeedFinder != nil {
+			feed = strings.TrimSpace(SparkleFeedFinder(a))
+		}
 		if feed == "" {
 			continue
 		}

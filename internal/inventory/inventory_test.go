@@ -87,3 +87,51 @@ func TestReadBundleIOSWrapper(t *testing.T) {
 		t.Fatal("expected error for missing bundle")
 	}
 }
+
+func TestApplyUpdatersOnlyRelabelsUnchecked(t *testing.T) {
+	r := Result{Applications: []Application{{Name: "A", Path: "/Applications/A.app"}, {Name: "B", Path: "/Applications/B.app"}, {Name: "C", Path: "/Applications/C.app"}}}
+	Reconcile(&r)
+	r.Entries[1].Status = "OUTDATED"
+	ApplyUpdaters(&r, func(a Application) UpdaterInfo {
+		switch a.Name {
+		case "A":
+			return UpdaterInfo{Status: "SELF-UPDATING", Source: "squirrel"}
+		case "B":
+			return UpdaterInfo{Status: "MANAGED", Source: "appstore"}
+		}
+		return UpdaterInfo{}
+	})
+	if r.Entries[0].Status != "SELF-UPDATING" || r.Entries[0].UpdateSource != "squirrel" {
+		t.Fatalf("%+v", r.Entries[0])
+	}
+	if r.Entries[1].Status != "OUTDATED" || r.Entries[1].UpdateSource != "" {
+		t.Fatalf("provider verdict overridden: %+v", r.Entries[1])
+	}
+	if r.Entries[2].Status != "UNCHECKED" {
+		t.Fatalf("%+v", r.Entries[2])
+	}
+}
+
+func TestSparkleFeedFinderFallback(t *testing.T) {
+	root := t.TempDir()
+	p := filepath.Join(root, "Hidden.app")
+	if err := os.MkdirAll(filepath.Join(p, "Contents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plist := `<?xml version="1.0"?><plist><dict><key>CFBundleVersion</key><string>100</string></dict></plist>`
+	if err := os.WriteFile(filepath.Join(p, "Contents", "Info.plist"), []byte(plist), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := SparkleFeedFinder
+	SparkleFeedFinder = func(a Application) string { return "https://example.org/hidden.xml" }
+	defer func() { SparkleFeedFinder = old }()
+	checks := CheckSparkle(context.Background(), []Application{{Path: p, Build: "100"}}, func(_ context.Context, feed string) ([]byte, error) {
+		if feed != "https://example.org/hidden.xml" {
+			t.Fatalf("unexpected feed %s", feed)
+		}
+		return []byte(`<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel><item><sparkle:version>200</sparkle:version></item></channel></rss>`), nil
+	})
+	if len(checks.Checks) != 1 || checks.Checks[0].Status != "OUTDATED" {
+		t.Fatalf("%+v", checks)
+	}
+}

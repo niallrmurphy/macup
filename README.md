@@ -48,6 +48,21 @@ default the table omits entries a provider has positively reported as
 `CURRENT` or `NOT FLAGGED`, and the footer says how many were hidden; pass
 `--all` to list everything. JSON output always contains every entry.
 
+Applications no provider could evaluate are labelled from local evidence
+instead of being left `UNCHECKED` wholesale. `SELF-UPDATING` means the bundle
+carries its own updater, named in `UPDATE SOURCE` (`sparkle`, `squirrel`,
+`electron-updater`, `keystone`, `mozilla`, `paddle`, `devmate`); `MANAGED`
+means something else updates it: `appstore` (receipt present), `browser`
+(web-app shim), `parent` (helper or uninstaller), `setapp`, or
+`vendor:<launchd label>` for a vendor-wide updater job. These labels are
+read-only observations, not verdicts on currency. `UNCHECKED` remains for
+bundles with no recognisable mechanism.
+
+The Sparkle provider also uses feeds the bundle keeps outside `Info.plist`:
+set in user defaults, or compiled into a binary (VLC and Path Finder, for
+example). When a vendor publishes one feed per architecture, the one naming
+the running architecture is chosen.
+
 iPhone and iPad apps installed from the App Store on Apple silicon are
 wrapped bundles without `Contents/Info.plist`. They are read from the inner
 bundle, reported with `"platform": "ios"` in JSON, and carry their App Store

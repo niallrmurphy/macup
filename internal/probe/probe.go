@@ -340,6 +340,7 @@ func Run(ctx context.Context, path string, opt Options) (Report, error) {
 	if opt.MaxPages <= 0 || opt.MaxPages > 3 {
 		opt.MaxPages = 3
 	}
+	inspectSigner(ctx, &r)
 	inspectBundle(ctx, &r, fields)
 	inspectLocal(ctx, &r, fields)
 	classify(&r, fields)

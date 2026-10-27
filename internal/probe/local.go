@@ -35,6 +35,9 @@ func inspectLocal(ctx context.Context, r *Report, fields map[string]string) {
 			r.addFamily("launch-agent:" + label)
 		}
 	}
+}
+
+func inspectSigner(ctx context.Context, r *Report) {
 	signer, team := codeSigner(ctx, r.Application.Path)
 	r.Signer, r.TeamID = signer, team
 }
@@ -45,14 +48,22 @@ var launchDirs = func() []string {
 var updaterLabel = regexp.MustCompile(`(?i)(updat|keystone|installer|creativecloud|autoupdate)`)
 
 // vendorLaunchAgents lists updater-looking launchd jobs sharing the app's
-// vendor prefix (the first two reverse-DNS labels). Apple jobs are ignored.
+// vendor prefix (the first two reverse-DNS labels). Jobs that also name the
+// product (com.microsoft.OneDrive -> OneDriveStandaloneUpdater) sort first,
+// ahead of vendor-wide agents. Apple jobs are ignored.
 func vendorLaunchAgents(bundleID string) []string {
 	parts := strings.Split(strings.ToLower(bundleID), ".")
 	if len(parts) < 2 || parts[0]+"."+parts[1] == "com.apple" {
 		return nil
 	}
 	prefix := parts[0] + "." + parts[1] + "."
-	var out []string
+	var product []string
+	for _, p := range parts[2:] {
+		if p = squash(p); len(p) >= 4 && !genericTokens[p] {
+			product = append(product, p)
+		}
+	}
+	var specific, general, other []string
 	for _, dir := range launchDirs() {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -60,12 +71,40 @@ func vendorLaunchAgents(bundleID string) []string {
 		}
 		for _, e := range entries {
 			name := strings.ToLower(strings.TrimSuffix(e.Name(), ".plist"))
-			if strings.HasPrefix(name, prefix) && updaterLabel.MatchString(name) {
-				out = append(out, strings.TrimSuffix(e.Name(), ".plist"))
+			if !strings.HasPrefix(name, prefix) || !updaterLabel.MatchString(name) {
+				continue
+			}
+			label := strings.TrimSuffix(e.Name(), ".plist")
+			rest := squash(strings.TrimPrefix(name, prefix))
+			named := false
+			for _, p := range product {
+				if strings.Contains(rest, p) || strings.Contains(rest, p[:4]) {
+					named = true
+				}
+			}
+			switch {
+			case named:
+				specific = append(specific, label)
+			case vendorWideAgent(rest):
+				general = append(general, label)
+			default:
+				// Names another product (OneDriveStandaloneUpdater seen from Word).
+				other = append(other, label)
 			}
 		}
 	}
-	return out
+	return append(append(specific, general...), other...)
+}
+
+// Words that describe an updater job rather than a product. A label made only
+// of these after the vendor prefix is a vendor-wide agent.
+var agentWords = []string{"autoupdate", "updater", "update", "keystone", "agent", "daemon", "helper", "installer", "xpcservice", "wake", "system", "login", "check", "service", "creativecloud", "googleupdater"}
+
+func vendorWideAgent(rest string) bool {
+	for _, w := range agentWords {
+		rest = strings.ReplaceAll(rest, w, "")
+	}
+	return strings.Trim(rest, "0123456789") == ""
 }
 
 var authorityLine = regexp.MustCompile(`(?m)^Authority=(.+)$`)

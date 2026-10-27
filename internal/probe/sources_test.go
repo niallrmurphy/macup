@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -254,7 +255,7 @@ func TestQuarantineMatching(t *testing.T) {
 
 func TestVendorLaunchAgents(t *testing.T) {
 	dir := t.TempDir()
-	for _, n := range []string{"com.google.keystone.agent.plist", "com.google.other.plist", "com.apple.updater.plist", "us.zoom.updater.plist"} {
+	for _, n := range []string{"com.google.keystone.agent.plist", "com.google.other.plist", "com.apple.updater.plist", "us.zoom.updater.plist", "com.microsoft.update.agent.plist", "com.microsoft.OneDriveStandaloneUpdater.plist"} {
 		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -270,6 +271,12 @@ func TestVendorLaunchAgents(t *testing.T) {
 	}
 	if got := vendorLaunchAgents("us.zoom.xos"); len(got) != 1 {
 		t.Fatalf("%v", got)
+	}
+	if got := vendorLaunchAgents("com.microsoft.OneDrive"); len(got) != 2 || got[0] != "com.microsoft.OneDriveStandaloneUpdater" {
+		t.Fatalf("product-named agent should sort first: %v", got)
+	}
+	if got := vendorLaunchAgents("com.microsoft.Word"); len(got) != 2 || got[0] != "com.microsoft.update.agent" {
+		t.Fatalf("vendor-wide agent should outrank another product's: %v", got)
 	}
 }
 
@@ -311,12 +318,18 @@ func TestClassify(t *testing.T) {
 	if r.Management == nil || r.Management.Kind != "helper" {
 		t.Fatalf("%+v", r.Management)
 	}
-	r = app("Chrome", "com.google.Chrome", "/Applications/Google Chrome.app")
-	r.addFamily("keystone")
-	r.addFamily("launch-agent:com.google.keystone.agent")
+	r = app("Word", "com.microsoft.Word", "/Applications/Microsoft Word.app")
+	r.addFamily("launch-agent:com.microsoft.update.agent")
 	classify(&r, nil)
 	if r.Management == nil || r.Management.Kind != "vendor" {
 		t.Fatalf("%+v", r.Management)
+	}
+	r = app("Code", "com.microsoft.VSCode", "/Applications/Visual Studio Code.app")
+	r.addFamily("squirrel")
+	r.addFamily("launch-agent:com.microsoft.update.agent")
+	classify(&r, nil)
+	if r.Management == nil || r.Management.Kind != "self" {
+		t.Fatalf("embedded updater should win over a vendor-wide agent: %+v", r.Management)
 	}
 	r = app("Editor", "org.example.editor", "/Applications/Editor.app")
 	r.addFamily("sparkle")
@@ -402,5 +415,26 @@ func TestFeedParsers(t *testing.T) {
 	</channel></rss>`)
 	if v, rel = latestAppcastItem(appcast); v != "1.10" || rel != "b" {
 		t.Fatal(v, rel)
+	}
+}
+
+func TestChooseAppcastPrefersArchitecture(t *testing.T) {
+	cs := []Candidate{
+		{URL: "https://update.example.org/vlc/sparkle/vlc-intel64.xml", Source: "binary:x.dylib", Score: 80},
+		{URL: "https://update.example.org/vlc/sparkle/vlc-arm64.xml", Source: "binary:x.dylib", Score: 80},
+		{URL: "https://example.org/privacy", Source: "executable", Score: 55},
+	}
+	got := chooseAppcast(cs)
+	if runtime.GOARCH == "arm64" && got != "https://update.example.org/vlc/sparkle/vlc-arm64.xml" {
+		t.Fatal(got)
+	}
+	if runtime.GOARCH == "amd64" && got != "https://update.example.org/vlc/sparkle/vlc-intel64.xml" {
+		t.Fatal(got)
+	}
+	if chooseAppcast([]Candidate{{URL: "https://example.org/appcast.xml", Source: "defaults:SUFeedURL", Score: 90}}) != "https://example.org/appcast.xml" {
+		t.Fatal("defaults feed")
+	}
+	if chooseAppcast([]Candidate{{URL: "https://example.org/releases", Source: "executable", Score: 80}}) != "" {
+		t.Fatal("non-appcast URL accepted")
 	}
 }

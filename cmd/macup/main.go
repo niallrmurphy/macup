@@ -166,6 +166,8 @@ func run(args []string) int {
 			announce("Adobe: %s", summariseCheck(a.CheckStatus, len(a.Products), "catalogue releases"))
 		}
 		if useSparkle {
+			// Feeds set in code or in user defaults are invisible to Info.plist alone.
+			inventory.SparkleFeedFinder = probe.SparkleFeed
 			var progress inventory.SparkleProgressFunc
 			if !*quietFlag || *debugFlag || *debugXMLDir != "" {
 				fmt.Fprintf(os.Stderr, "Sparkle: examining %d applications for update feeds\n", len(result.Applications))
@@ -219,6 +221,11 @@ func run(args []string) int {
 					fmt.Fprintln(os.Stderr, "Sparkle: every discovered feed is included above, including pre-fetch skips")
 				}
 			}
+		}
+		if useApps {
+			// Label what remains: apps that update themselves, or are updated by
+			// the App Store, a browser, a vendor agent, or their parent product.
+			inventory.ApplyUpdaters(&result, probe.Updater)
 		}
 		if *jsonOut {
 			err = output.JSON(os.Stdout, result)
