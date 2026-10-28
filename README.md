@@ -24,8 +24,9 @@ machine (see [What leaves the machine](#what-leaves-the-machine)).
 
 ## Install
 
-With Homebrew, which builds the tagged release from source and keeps it
-updated with `brew upgrade`:
+With Homebrew, which installs a prebuilt binary on Apple silicon running
+macOS 26 or newer, builds from source elsewhere (installing Go itself to do
+so), and keeps it updated with `brew upgrade`:
 
 ```sh
 brew install niallrmurphy/macup/macup
