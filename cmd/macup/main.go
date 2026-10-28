@@ -18,6 +18,25 @@ import (
 	"time"
 )
 
+// Set at build time: -ldflags "-X main.version=1.0.0 -X main.commit=abc -X main.date=2026-10-28".
+var (
+	version = "dev"
+	commit  = ""
+	date    = ""
+)
+
+func versionString() string {
+	s := "macup " + version
+	if commit != "" {
+		s += " (" + commit
+		if date != "" {
+			s += ", " + date
+		}
+		s += ")"
+	}
+	return s
+}
+
 func main() { os.Exit(run(os.Args[1:])) }
 func run(args []string) int {
 	if len(args) == 0 {
@@ -185,6 +204,9 @@ func run(args []string) int {
 		if err := diagnostics.Run(os.Stdout, selectedRoots(*rootsFlag)); err != nil {
 			return 1
 		}
+		return 0
+	case "version", "--version", "-v":
+		fmt.Println(versionString())
 		return 0
 	case "help", "-h", "--help":
 		usage()
@@ -652,6 +674,7 @@ func usage() {
 
 Usage:
   macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle,adobe,lookup] [--offline] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--lookup|--no-lookup] [--cache-ttl 1h] [--fresh] [--quiet] [--verbose] [--all] [--status "NO SOURCE"] [--paths] [--roots /Applications,/Users/me/Applications]
+  macup version
   macup update [--only NAME,...] [--yes | --fetch-only] [--allow-unverified] [--fresh] [--quiet]
   macup probe [--lookup] [--origins] [--fetch] [--model llama3.2:latest] [--max-pages 3] /Applications/Example.app
   macup probe --all [--roots /Applications] [--include-system] [--lookup] [--origins] [--fetch] [--model MODEL] [--workers 2]

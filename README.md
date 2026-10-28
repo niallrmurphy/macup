@@ -4,6 +4,21 @@ A small, CLI-first macOS application inventory and update checker written in Go.
 
 **Current functionality:** find `.app` bundles, read `Contents/Info.plist`, and output an inventory as a table or JSON, with update status from Homebrew, the App Store, Sparkle appcasts, Microsoft AutoUpdate, the Adobe catalogue, and public lookups for everything else. It does not assess CVEs or install anything. A default scan contacts vendors and catalogues; `macup scan --offline` guarantees that nothing leaves the machine (see [What leaves the machine](#what-leaves-the-machine)).
 
+## Install
+
+Download the universal binary from the
+[latest release](https://github.com/niallrmurphy/macup/releases/latest),
+verify it against the published `SHA256SUMS`, and put it on your `PATH`:
+
+```sh
+tar -xzf macup_1.0.0_darwin_universal.tar.gz
+shasum -a 256 -c SHA256SUMS
+mv macup /usr/local/bin/
+macup version
+```
+
+Or build from source with Go 1.22 or newer: `go install github.com/niallrmurphy/macup/cmd/macup@latest`.
+
 ## Requirements
 
 - macOS (Apple Silicon or Intel), Go **1.22+** to build.
@@ -127,14 +142,17 @@ gofmt -w ./cmd ./internal
 
 The core inventory parser and scanner tests can run on Linux, but testing on a Mac is necessary to exercise binary plist handling and verify discovery behavior on real-world app directories.
 
-## Roadmap
+## Status and roadmap
 
-1. **Milestone 1 (this release):** safe local inventory, JSON/table, diagnostics.
-2. Homebrew inventory provider with `brew list --versions` and `brew outdated --json=v2` (implemented).
-3. Sparkle appcast support (conservative; on by default, `--providers` controls it).
-4. App Store inventory via `mas` (implemented); caching, error reporting, end-to-end macOS CI remain future work.
+**1.0** covers inventory (bundles, Homebrew, App Store), update checking
+(Sparkle, Microsoft AutoUpdate, Adobe catalogue, public lookups), local
+labelling of self-updating and managed apps, a result cache, an offline
+mode, and a plan-first `macup update` that delegates to package managers and
+verifies Sparkle downloads. See `CHANGELOG.md`.
 
-`macup update` exists (see below); `macup audit` does not.
+Not yet: a verified download route for cask-index hits on apps installed
+outside Homebrew (the index carries a sha256), Skylum's run-time Sparkle
+feeds, end-to-end macOS CI, and the long-promised `macup audit`.
 
 ## License
 

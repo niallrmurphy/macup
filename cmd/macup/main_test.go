@@ -100,3 +100,14 @@ func TestProvidersIncludeLookup(t *testing.T) {
 		t.Fatal("none must not combine")
 	}
 }
+
+func TestVersionString(t *testing.T) {
+	version, commit, date = "1.0.0", "abc1234", "2026-10-28"
+	if got := versionString(); got != "macup 1.0.0 (abc1234, 2026-10-28)" {
+		t.Fatal(got)
+	}
+	commit, date = "", ""
+	if got := versionString(); got != "macup 1.0.0" {
+		t.Fatal(got)
+	}
+}
