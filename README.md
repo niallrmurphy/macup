@@ -1,8 +1,28 @@
 # macup
 
-A small, CLI-first macOS application inventory and update checker written in Go. `macup scan` is **read-only**; `macup update` changes nothing until you pass `--yes`, and even then only hands work to the package manager that owns the software or downloads a signature-verified update for you to open.
+Macup is a small, CLI-first macOS application inventory and update checker written in Go.
 
-**Current functionality:** find `.app` bundles, read `Contents/Info.plist`, and output an inventory as a table or JSON, with update status from Homebrew, the App Store, Sparkle appcasts, Microsoft AutoUpdate, the Adobe catalogue, and public lookups for everything else. It does not assess CVEs or install anything. A default scan contacts vendors and catalogues; `macup scan --offline` guarantees that nothing leaves the machine (see [What leaves the machine](#what-leaves-the-machine)).
+If you've found yourself wrestling with how to update a lot of software in a hurry,
+across a myriad of update platforms, `macup` is for you.
+
+The design is deliberately different from other, more centralised update systems. We take
+advantage of other update systems and data as much as possible, so we don't have to run
+anything centralised. In practice, this means we look at the AppStore, Homebrew, Sparkle
+Appcasts, Microsoft AutoUpdate, and the Adobe catalogue, with heuristic-driven public lookups
+for everything else. (Suggestions for additional update providers welcome.) Having
+established whether or not updates are available, and what provider supplies them,
+we can download updates at the user's request from as close to an authorised channel
+as we can establish.
+
+We don't change anything unexpectedly. `macup scan`, the default invocation, is **read-only**,
+and `macup update` changes nothing until you pass `--yes`. Even then it enacts an update only
+via the appropriate update provider, or downloads a signature-verified update for you to open.
+
+For standard applications, `macup` looks for `.app` bundles in standard locations, reads
+`Contents/Info.plist`, and outputs an inventory as a table or JSON, with available update
+status from the locations listed above. A default scan contacts vendors and catalogues
+locally and over the network; `macup scan --offline` guarantees that nothing leaves the
+machine (see [What leaves the machine](#what-leaves-the-machine)).
 
 ## Install
 
@@ -29,7 +49,7 @@ Or build from source with Go 1.22 or newer: `go install github.com/niallrmurphy/
 ```sh
 go build -o macup ./cmd/macup
 ./macup scan                     # all sources (apps, Homebrew, App Store)
-./macup scan --apps              # user-updateable .app bundles (hides macOS system apps)
+./macup scan --apps              # user-updateable .app bundles (hides macOS system apps by default)
 ./macup scan --apps --include-system # also show Apple OS-managed system apps
 ./macup scan --brew              # Homebrew only
 ./macup scan --appstore          # Mac App Store only (mas required)
@@ -62,7 +82,9 @@ source flags, all sources are scanned. `--roots` also enables the `apps` source.
 
 Optional dependencies: Homebrew (`brew`) for the Homebrew source and the
 [mas CLI](https://github.com/mas-cli/mas) for the App Store source.
-Missing tools produce warnings instead of aborting the scan.
+Missing tools produce warnings instead of aborting the scan. Homebrew maintains
+a key source of available updates, so overall result quality is improved greatly
+if you have it installed.
 
 All selected sources are rendered in one table with the same columns. By
 default the table omits entries a provider has positively reported as
@@ -72,31 +94,32 @@ insensitive) to list only chosen statuses. The `DETAIL` column carries
 provider reasons; `--paths` adds the bundle path and cask name, which doubles
 the table width. JSON output always contains every entry.
 
-Applications no provider could evaluate are labelled from local evidence
-instead of being left `NO SOURCE` wholesale. `SELF-UPDATING` means the bundle
-carries its own updater, named in `UPDATE SOURCE` (`sparkle`, `squirrel`,
+Applications that no provider could evaluate are labelled from local evidence
+instead of being left `NO SOURCE`. `SELF-UPDATING` means the bundle
+has its own updater, named in `UPDATE SOURCE` (`sparkle`, `squirrel`,
 `electron-updater`, `keystone`, `mozilla`, `paddle`, `devmate`); `MANAGED`
 means something else updates it: `appstore` (receipt present), `browser`
 (web-app shim), `parent` (helper or uninstaller), `setapp`, or
 `vendor:<launchd label>` for a vendor-wide updater job. Updater frameworks
-are found however deeply a vendor nests them (Chromium-based browsers bury
+are found even if a vendor has tucked them away (Chromium-based browsers bury
 Sparkle inside their own framework; Docker wraps a Squirrel app) and a
-helper named like an updater (`BraveUpdater`, `opera_autoupdate`) counts as
-one. These labels are read-only observations, not verdicts on currency.
-`NO SOURCE` remains for bundles with no recognisable mechanism: macup found
-nothing to check, which is different from not having checked.
+helper named like an updater (`BraveUpdater`, `opera_autoupdate`) also counts as
+one. If we can't find any update source, we label the item `NO SOURCE`; this
+helps us to distinguish having nothing to check from not having checked.
 
 The `lookup` provider, on by default (`--no-lookup` or
-`--providers=sparkle,microsoft,adobe` to leave it out), goes further for
-anything still without a provider verdict. It asks the App Store catalogue by
-bundle identifier, the Homebrew cask index by app name, and release feeds
-derived from evidence in the bundle, and folds the answer in: a source listing a newer version makes the entry
-`OUTDATED` with that source named in `UPDATE SOURCE` and `lookup` added to
+`--providers=sparkle,microsoft,adobe` to leave it out), tries harder to find
+a possible update source by:
+* asking the App Store catalogue by bundle identifier;
+* the Homebrew cask index by app name; and
+* release feeds derived from evidence in the bundle.
+
+If we get an answer suggesting there is a legitimate update, we label the item
+`OUTDATED` with the relevant source named in `UPDATE SOURCE` and `lookup` added to
 `SOURCE`; a source listing the same version makes it `NOT FLAGGED`; anything
-less conclusive is noted in `DETAIL`. Catalogues outrank feeds derived from
+less conclusive is noted in the column `DETAIL`. Catalogues outrank feeds derived from
 a repository name found in a binary. Helpers and browser web-app shims are
-skipped. This is the same machinery as `macup probe --lookup`, described
-below, and it needs the network.
+skipped. Obviously, this requires network connectivity.
 
 The Sparkle provider also uses feeds the bundle keeps outside `Info.plist`:
 set in user defaults, or compiled into a binary (VLC and Path Finder, for
@@ -105,8 +128,9 @@ the running architecture is chosen.
 
 iPhone and iPad apps installed from the App Store on Apple silicon are
 wrapped bundles without `Contents/Info.plist`. They are read from the inner
-bundle, reported with `"platform": "ios"` in JSON, and carry their App Store
+bundle, reported with `"platform": "ios"` in JSON, and use their App Store
 item identifier so they reconcile with `mas` output.
+
 A package `NOT FLAGGED` as outdated is **not** guaranteed to be current with
 its vendor. The plain `.app` scan has no update-checking source and uses
 `NO SOURCE`. Cask and App Store entries may also describe apps found in the
@@ -131,6 +155,7 @@ making speculative identity matches.
 - A broken bundle appears as a warning, not an application. Missing scan roots are silently skipped.
 - App bundles outside the configured roots, and some applications without conventional Info.plist files, may be missed.
 - Does not execute bundled app code, use elevated privileges, or modify software. Network requests are described under [What leaves the machine](#what-leaves-the-machine) and `--offline` turns them all off.
+- Does not install non-platform-supported updates automatically. We currently feel this to be roughly doable via heuristics, but potentially unsafe.
 
 ## Development
 
@@ -151,8 +176,9 @@ mode, and a plan-first `macup update` that delegates to package managers and
 verifies Sparkle downloads. See `CHANGELOG.md`.
 
 Not yet: a verified download route for cask-index hits on apps installed
-outside Homebrew (the index carries a sha256), Skylum's run-time Sparkle
-feeds, end-to-end macOS CI, and the long-promised `macup audit`.
+outside Homebrew (the index uses sha256), Skylum's run-time Sparkle
+feeds, end-to-end macOS CI, and the long-promised `macup audit`. (Well,
+long-promised by me to me, anyway.)
 
 ## License
 
@@ -221,7 +247,7 @@ runs without `--yes`.
 
 The Sparkle route never replaces an application bundle: Sparkle's own
 installer handles running apps, helpers, launch agents and permissions, and
-reimplementing that is how installs get broken. Instead the enclosure is
+reimplementing that is a recipe for breakage. Instead the enclosure is
 downloaded into its own directory under `~/Library/Caches/macup/downloads`
 (so an archive expanded by Archive Utility stays beside it), named from the
 URL that actually served it, its Content-Disposition, or the file's own
@@ -244,8 +270,8 @@ to their own updater.
 ## What leaves the machine
 
 macup is read-only, but a default scan does talk to the network, because
-that is where update information lives. This is exactly what each step
-contacts, so you can choose a mode you are comfortable with.
+that is where update information lives. Here is what each step does, so you
+can choose a mode you are comfortable with.
 
 | Step | Contacts | Sends |
 |---|---|---|
