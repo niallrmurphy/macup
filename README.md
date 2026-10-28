@@ -1,6 +1,6 @@
 # macup
 
-Macup is a small, CLI-first macOS application inventory and update checker written in Go.
+`macup` is a small, CLI-first macOS application inventory and update checker written in Go.
 
 If you've found yourself wrestling with how to update a lot of software in a hurry,
 across a myriad of update platforms, `macup` is for you.
@@ -177,8 +177,8 @@ verifies Sparkle downloads. See `CHANGELOG.md`.
 
 Not yet: a verified download route for cask-index hits on apps installed
 outside Homebrew (the index uses sha256), Skylum's run-time Sparkle
-feeds, end-to-end macOS CI, and the long-promised `macup audit`. (Well,
-long-promised by me to me, anyway.)
+feeds, end-to-end macOS CI, and a SBOM export suitable for managing
+CVE detection.
 
 ## License
 
