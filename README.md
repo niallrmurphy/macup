@@ -24,18 +24,33 @@ machine (see [What leaves the machine](#what-leaves-the-machine)).
 
 ## Install
 
-Download the universal binary from the
-[latest release](https://github.com/niallrmurphy/macup/releases/latest),
-verify it against the published `SHA256SUMS`, and put it on your `PATH`:
+With Homebrew, which builds the tagged release from source and keeps it
+updated with `brew upgrade`:
 
 ```sh
-tar -xzf macup_1.0.0_darwin_universal.tar.gz
-shasum -a 256 -c SHA256SUMS
-mv macup /usr/local/bin/
+brew install niallrmurphy/macup/macup
 macup version
 ```
 
-Or build from source with Go 1.22 or newer: `go install github.com/niallrmurphy/macup/cmd/macup@latest`.
+Other routes:
+
+- **Release tarball.** Download the universal binary from the
+  [latest release](https://github.com/niallrmurphy/macup/releases/latest),
+  verify it, and put it on your `PATH`:
+
+  ```sh
+  tar -xzf macup_1.0.0_darwin_universal.tar.gz
+  shasum -a 256 -c SHA256SUMS
+  mv macup /usr/local/bin/
+  ```
+
+  The binary is not yet signed or notarized. A copy downloaded through a
+  browser carries the quarantine flag and macOS will refuse to run it until
+  you clear it with `xattr -d com.apple.quarantine macup`. Downloads made
+  with `curl` or `gh release download` are not flagged.
+
+- **From source**, with Go 1.22 or newer:
+  `go install github.com/niallrmurphy/macup/cmd/macup@latest`.
 
 ## Requirements
 
@@ -175,8 +190,10 @@ verifies Sparkle downloads. See `CHANGELOG.md`.
 
 Not yet: a verified download route for cask-index hits on apps installed
 outside Homebrew (the index uses sha256), Skylum's run-time Sparkle
-feeds, end-to-end macOS CI, and a SBOM export suitable for managing
-CVE detection.
+feeds, signed and notarized release binaries, end-to-end macOS CI, and a
+SBOM export suitable for managing CVE detection. A `macup audit` command is
+not planned: vulnerability matching belongs to tools built for it, and the
+SBOM export is how they would consume macup's inventory.
 
 ## License
 
