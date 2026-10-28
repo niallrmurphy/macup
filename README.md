@@ -192,8 +192,8 @@ Not yet: a verified download route for cask-index hits on apps installed
 outside Homebrew (the index uses sha256), Skylum's run-time Sparkle
 feeds, signed and notarized release binaries, end-to-end macOS CI, and a
 SBOM export suitable for managing CVE detection. A `macup audit` command is
-not planned: vulnerability matching belongs to tools built for it, and the
-SBOM export is how they would consume macup's inventory.
+not planned: vulnerability matching belongs to tools built for it, and an
+SBOM export is probably the best approach here.
 
 ## License
 
