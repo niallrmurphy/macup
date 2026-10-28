@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.2 (2026-10-28)
 
 - Sparkle enclosures given as relative URLs (Tailscale's appcast lists
   `Tailscale-1.105.110-macos.zip`) are resolved against the feed URL, as

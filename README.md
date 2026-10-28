@@ -39,7 +39,7 @@ Other routes:
   verify it, and put it on your `PATH`:
 
   ```sh
-  tar -xzf macup_1.0.1_darwin_universal.tar.gz
+  tar -xzf macup_1.0.2_darwin_universal.tar.gz
   shasum -a 256 -c SHA256SUMS
   mv macup /usr/local/bin/
   ```
