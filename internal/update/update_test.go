@@ -96,3 +96,27 @@ func TestExecuteSkipsUnverifiableWithoutFlag(t *testing.T) {
 		t.Fatal(failed, out.String())
 	}
 }
+
+func TestStagedName(t *testing.T) {
+	a := Action{Name: "HandBrake", Available: "1.11.2", URL: "https://handbrake.fr/rotation.php?file=HandBrake-1.11.2.dmg&update=true"}
+	dmg := append(make([]byte, 600), []byte("koly")...)
+	dmg = append(dmg, make([]byte, 508)...)
+	if got := stagedName(a, "https://github.com/HandBrake/HandBrake/releases/download/1.11.2/HandBrake-1.11.2.dmg", "", dmg); got != "HandBrake-1.11.2.dmg" {
+		t.Fatal(got)
+	}
+	if got := stagedName(a, a.URL, "", dmg); got != "HandBrake-1.11.2.dmg" {
+		t.Fatal("file= query parameter should name the download:", got)
+	}
+	if got := stagedName(Action{Name: "X", Available: "2", URL: "https://x.example/get"}, "https://x.example/get", `attachment; filename="X-2.zip"`, nil); got != "X-2.zip" {
+		t.Fatal(got)
+	}
+	if got := stagedName(Action{Name: "Odd App", Available: "3", URL: "https://x.example/get"}, "https://x.example/get", "", dmg); got != "Odd_App-3.dmg" {
+		t.Fatal(got)
+	}
+	if got := sniffExtension([]byte("PK\x03\x04rest")); got != ".zip" {
+		t.Fatal(got)
+	}
+	if got := sniffExtension([]byte("xar!....")); got != ".pkg" {
+		t.Fatal(got)
+	}
+}

@@ -89,20 +89,18 @@ func fetchSparkle(ctx context.Context, a Action, opts Options) error {
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
 		return errors.New("enclosure is not a public HTTPS URL")
 	}
-	dir := StagingDir()
+	// One directory per download: opening a zip makes Archive Utility expand
+	// the .app beside it, and that belongs with its archive, not in the root.
+	dir := filepath.Join(StagingDir(), unsafeName.ReplaceAllString(a.Name+"-"+a.Available, "_"))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	name := unsafeName.ReplaceAllString(filepath.Base(u.Path), "_")
-	if name == "" || name == "." || name == "_" {
-		name = unsafeName.ReplaceAllString(a.Name, "_") + "-" + unsafeName.ReplaceAllString(a.Available, "_")
-	}
-	dest := filepath.Join(dir, name)
 	fmt.Fprintf(opts.Out, "fetch  %s: %s\n", a.Name, a.URL)
-	data, err := download(ctx, a.URL, maxEnclosure)
+	data, finalURL, disposition, err := download(ctx, a.URL, maxEnclosure)
 	if err != nil {
 		return err
 	}
+	dest := filepath.Join(dir, stagedName(a, finalURL, disposition, data))
 	if a.Length > 0 && int64(len(data)) != a.Length {
 		return fmt.Errorf("size %d does not match appcast length %d", len(data), a.Length)
 	}
@@ -130,10 +128,66 @@ func fetchSparkle(ctx context.Context, a Action, opts Options) error {
 	return exec.CommandContext(ctx, "/usr/bin/open", dest).Run()
 }
 
-func download(ctx context.Context, raw string, max int) ([]byte, error) {
+// stagedName picks a filename for the enclosure. Vendors often publish the
+// enclosure through a redirector (HandBrake's rotation.php), so the original
+// URL's path is the least reliable source: prefer Content-Disposition, then
+// the URL that actually served the bytes, then the content's own magic.
+func stagedName(a Action, finalURL, disposition string, data []byte) string {
+	candidates := []string{}
+	if i := strings.Index(strings.ToLower(disposition), "filename="); i >= 0 {
+		candidates = append(candidates, strings.Trim(disposition[i+len("filename="):], `"; `))
+	}
+	for _, raw := range []string{finalURL, a.URL} {
+		if u, err := url.Parse(raw); err == nil {
+			candidates = append(candidates, filepath.Base(u.Path))
+			if f := u.Query().Get("file"); f != "" {
+				candidates = append(candidates, filepath.Base(f))
+			}
+		}
+	}
+	for _, c := range candidates {
+		c = unsafeName.ReplaceAllString(c, "_")
+		if installerExt(c) {
+			return c
+		}
+	}
+	base := unsafeName.ReplaceAllString(a.Name+"-"+a.Available, "_")
+	return base + sniffExtension(data)
+}
+
+func installerExt(name string) bool {
+	lower := strings.ToLower(name)
+	for _, ext := range []string{".dmg", ".zip", ".pkg", ".mpkg", ".tar.xz", ".tar.gz", ".tgz", ".tbz", ".tar.bz2"} {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// sniffExtension recognises the formats Sparkle enclosures come in.
+func sniffExtension(data []byte) string {
+	switch {
+	case len(data) >= 512 && string(data[len(data)-512:len(data)-508]) == "koly":
+		return ".dmg"
+	case len(data) >= 4 && string(data[:4]) == "PK\x03\x04":
+		return ".zip"
+	case len(data) >= 4 && string(data[:4]) == "xar!":
+		return ".pkg"
+	case len(data) >= 6 && string(data[:6]) == "\xfd7zXZ\x00":
+		return ".tar.xz"
+	case len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b:
+		return ".tar.gz"
+	case len(data) >= 3 && string(data[:3]) == "BZh":
+		return ".tar.bz2"
+	}
+	return ".bin"
+}
+
+func download(ctx context.Context, raw string, max int) ([]byte, string, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
-		return nil, err
+		return nil, "", "", err
 	}
 	req.Header.Set("User-Agent", "macup-update/0.1")
 	client := &http.Client{Timeout: 15 * time.Minute, CheckRedirect: func(r *http.Request, via []*http.Request) error {
@@ -147,20 +201,24 @@ func download(ctx context.Context, raw string, max int) ([]byte, error) {
 	}}
 	res, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, "", "", err
 	}
 	defer res.Body.Close()
+	final := raw
+	if res.Request != nil && res.Request.URL != nil {
+		final = res.Request.URL.String()
+	}
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", res.StatusCode)
+		return nil, final, "", fmt.Errorf("HTTP %d", res.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(res.Body, int64(max)+1))
 	if err != nil {
-		return nil, err
+		return nil, final, "", err
 	}
 	if len(data) > max {
-		return nil, fmt.Errorf("enclosure exceeds %d bytes", max)
+		return nil, final, "", fmt.Errorf("enclosure exceeds %d bytes", max)
 	}
-	return data, nil
+	return data, final, res.Header.Get("Content-Disposition"), nil
 }
 
 // verifyEdDSA checks a Sparkle 2 EdDSA signature: ed25519 over the whole

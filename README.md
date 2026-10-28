@@ -204,8 +204,11 @@ runs without `--yes`.
 The Sparkle route never replaces an application bundle: Sparkle's own
 installer handles running apps, helpers, launch agents and permissions, and
 reimplementing that is how installs get broken. Instead the enclosure is
-downloaded to `~/Library/Caches/macup/downloads`, its size is checked against
-the appcast, and its **EdDSA signature is verified with the application's own
+downloaded into its own directory under `~/Library/Caches/macup/downloads`
+(so an archive expanded by Archive Utility stays beside it), named from the
+URL that actually served it, its Content-Disposition, or the file's own
+format when the vendor publishes through a redirector script; its size is
+checked against the appcast, and its **EdDSA signature is verified with the application's own
 `SUPublicEDKey`** before the file is written. An enclosure without a signature,
 or an app without a public key, is skipped unless `--allow-unverified` is
 given, and is then labelled `UNVERIFIED`. Downloads carry a quarantine flag so
