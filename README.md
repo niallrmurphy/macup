@@ -5,12 +5,10 @@
 If you've found yourself wrestling with how to update a lot of software in a hurry,
 across a myriad of update platforms, `macup` is for you.
 
-The design is deliberately different from other, more centralised update systems. We take
-advantage of other update systems and data as much as possible, so we don't have to run
-anything centralised. In practice, this means we look at the AppStore, Homebrew, Sparkle
-Appcasts, Microsoft AutoUpdate, and the Adobe catalogue, with heuristic-driven public lookups
-for everything else. (Suggestions for additional update providers welcome.) Having
-established whether or not updates are available, and what provider supplies them,
+We avoid maintaining our own centralised version database by using all the others.
+We use the AppStore, Homebrew, Sparkle Appcasts, Microsoft AutoUpdate, and the
+Adobe catalogue, with heuristic-driven public lookups for everything else.
+Having established whether or not updates are available, and what provider supplies them,
 we can download updates at the user's request from as close to an authorised channel
 as we can establish.
 
