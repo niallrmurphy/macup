@@ -46,8 +46,8 @@ Other routes:
   ```
 
   The binary is not yet signed or notarized. A copy downloaded through a
-  browser carries the quarantine flag and macOS will refuse to run it until
-  you clear it with `xattr -d com.apple.quarantine macup`. Downloads made
+  browser has the quarantine flag, and macOS won't run it until
+  you clear that with `xattr -d com.apple.quarantine macup`. Downloads made
   with `curl` or `gh release download` are not flagged.
 
 - **From source**, with Go 1.22 or newer:
