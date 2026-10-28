@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+Fixes and improvements from the first field report on 1.0.0.
+
+- `macup update --yes` runs `brew update` first (`--skip-brew-update` to
+  skip), so the versions installed are the ones the plan showed and the
+  first upgrade no longer triggers Homebrew's auto-update mid-run.
+- Homebrew actions are batched into one `brew upgrade --formula ...` and one
+  `brew upgrade --cask ...`, so dependencies are resolved once instead of
+  being revisited per package.
+- After executing, `update` rescans and prints a summary: updated,
+  downloaded-and-verified-but-not-yet-installed (opening an archive is not
+  installing), still outdated, newly outdated since the plan, Homebrew
+  dependencies that changed as side effects (new Python, OpenSSL, removals),
+  skipped, and failed. `--no-rescan` restores the old behaviour.
+- iTunes lookups only accept Mac listings: a shared bundle identifier no
+  longer compares a Mac app against its iOS version (Spotify 9.x).
+- A Sparkle enclosure that is not an HTTPS URL is reported with the URL.
+- When Homebrew calls a numerically lower version an upgrade (openssl@3
+  3.6.3 -> 3.5.9, a version-scheme change), the row says so in DETAIL.
+- When msupdate prints an error instead of a property list (for example an
+  XPC connection failure), the warning shows that error rather than a
+  plist conversion failure.
+- The table shows paths automatically for bundles that share a name.
+
 ## 1.0.0 (2026-10-28)
 
 First release.

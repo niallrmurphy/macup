@@ -358,12 +358,15 @@ func TestClassify(t *testing.T) {
 }
 
 func TestParseITunes(t *testing.T) {
-	l, err := parseITunes([]byte(`{"resultCount":1,"results":[{"trackName":"Magnet","version":"3.0.7","currentVersionReleaseDate":"2025-04-12T02:54:13Z","sellerUrl":"https://magnet.crowdcafe.com","trackViewUrl":"https://apps.apple.com/x"}]}`), "3.0.6")
+	l, err := parseITunes([]byte(`{"resultCount":1,"results":[{"kind":"mac-software","trackName":"Magnet","version":"3.0.7","currentVersionReleaseDate":"2025-04-12T02:54:13Z","sellerUrl":"https://magnet.crowdcafe.com","trackViewUrl":"https://apps.apple.com/x"}]}`), "3.0.6")
 	if err != nil || l == nil || l.Version != "3.0.7" || l.Comparison != "newer" || l.Note != "https://magnet.crowdcafe.com" {
 		t.Fatalf("%+v %v", l, err)
 	}
 	if l, err = parseITunes([]byte(`{"resultCount":0,"results":[]}`), "1"); err != nil || l != nil {
 		t.Fatalf("%+v %v", l, err)
+	}
+	if l, err = parseITunes([]byte(`{"resultCount":1,"results":[{"kind":"software","trackName":"Spotify","version":"9.1.94"}]}`), "1.3.6"); err != nil || l != nil {
+		t.Fatalf("iOS listing must be ignored: %+v %v", l, err)
 	}
 }
 

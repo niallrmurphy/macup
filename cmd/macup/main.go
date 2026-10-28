@@ -158,6 +158,8 @@ func run(args []string) int {
 		only := fs.String("only", "", "comma-separated names (case-insensitive substrings) to limit the plan to")
 		quietFlag := fs.Bool("quiet", false, "suppress scan progress messages on stderr")
 		freshFlag := fs.Bool("fresh", false, "ignore cached provider results for the scan")
+		skipBrewUpdate := fs.Bool("skip-brew-update", false, "do not run `brew update` before planning")
+		noRescan := fs.Bool("no-rescan", false, "skip the rescan and summary after executing")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
 		}
@@ -167,6 +169,19 @@ func run(args []string) int {
 		}
 		cfg := defaultScanConfig()
 		cfg.quietFlag, cfg.freshFlag = *quietFlag, *freshFlag
+		announce := func(format string, args ...any) {
+			if !*quietFlag {
+				fmt.Fprintf(os.Stderr, format+"\n", args...)
+			}
+		}
+		if (*yes || *fetchOnly) && !*skipBrewUpdate {
+			// Otherwise the first `brew upgrade` auto-updates Homebrew and the
+			// versions installed differ from the ones the plan advertised.
+			announce("Homebrew: refreshing metadata (brew update)")
+			if err := update.BrewUpdate(context.Background(), os.Stderr, os.Stderr); err != nil {
+				announce("Homebrew: brew update failed: %v", err)
+			}
+		}
 		result, err := performScan(cfg)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -185,9 +200,29 @@ func run(args []string) int {
 			return 0
 		}
 		opts := update.Options{FetchOnly: *fetchOnly, AllowUnverified: *allowUnverified, Out: os.Stdout, Err: os.Stderr}
-		failed := update.Execute(context.Background(), plan, opts)
+		brewBefore := update.BrewVersions(context.Background())
+		outcomes := update.Execute(context.Background(), plan, opts)
+		failed := 0
+		for _, o := range outcomes {
+			if o.Result == "failed" {
+				failed++
+			}
+		}
+		if *noRescan {
+			if failed > 0 {
+				fmt.Fprintf(os.Stderr, "%d actions failed\n", failed)
+				return 1
+			}
+			return 0
+		}
+		announce("Rescanning to confirm what changed")
+		after, err := performScan(cfg)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		update.Summarise(outcomes, after, brewBefore, update.BrewVersions(context.Background())).Print(os.Stdout)
 		if failed > 0 {
-			fmt.Fprintf(os.Stderr, "%d actions failed\n", failed)
 			return 1
 		}
 		return 0
@@ -675,7 +710,7 @@ func usage() {
 Usage:
   macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle,adobe,lookup] [--offline] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--lookup|--no-lookup] [--cache-ttl 1h] [--fresh] [--quiet] [--verbose] [--all] [--status "NO SOURCE"] [--paths] [--roots /Applications,/Users/me/Applications]
   macup version
-  macup update [--only NAME,...] [--yes | --fetch-only] [--allow-unverified] [--fresh] [--quiet]
+  macup update [--only NAME,...] [--yes | --fetch-only] [--allow-unverified] [--skip-brew-update] [--no-rescan] [--fresh] [--quiet]
   macup probe [--lookup] [--origins] [--fetch] [--model llama3.2:latest] [--max-pages 3] /Applications/Example.app
   macup probe --all [--roots /Applications] [--include-system] [--lookup] [--origins] [--fetch] [--model MODEL] [--workers 2]
   macup doctor [--roots /Applications]

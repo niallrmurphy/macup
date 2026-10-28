@@ -250,7 +250,13 @@ untrusted, especially on untrusted machines.
 
 `macup update` runs the same scan as `macup scan`, then maps every
 `OUTDATED` entry to the most trustworthy route and prints the plan. Nothing
-runs without `--yes`.
+runs without `--yes`. With `--yes` it first refreshes Homebrew's metadata
+(`--skip-brew-update` to skip), so what gets installed is what the plan
+showed; Homebrew actions are batched into one upgrade per kind. Afterwards
+it rescans and prints a summary that separates *updated* from *downloaded
+and verified but not yet installed*, lists anything newly outdated, and
+lists Homebrew packages that changed as dependencies, such as a new Python
+or OpenSSL. `--no-rescan` skips that step.
 
 | Route | What runs | Who does the install |
 |---|---|---|

@@ -24,43 +24,116 @@ type Options struct {
 	Out, Err        io.Writer
 }
 
-// Execute runs the plan and returns the number of failed actions. Every
-// action is appended to the update log.
-func Execute(ctx context.Context, plan []Action, opts Options) int {
-	failed := 0
+// Outcome records what happened to one planned action.
+type Outcome struct {
+	Action Action
+	Result string // ran, staged, opened, skipped, failed
+	Err    error
+}
+
+// Execute runs the plan and returns one outcome per action. Homebrew
+// actions are batched into a single upgrade per kind so dependencies are
+// resolved once; everything else runs one at a time. Every executed or
+// failed action is appended to the update log.
+func Execute(ctx context.Context, plan []Action, opts Options) []Outcome {
+	var out []Outcome
+	var formulae, casks []Action
 	for _, a := range plan {
-		var err error
 		switch {
 		case a.Route == RouteSparkle:
-			err = fetchSparkle(ctx, a, opts)
+			res, err := fetchSparkle(ctx, a, opts)
+			out = append(out, record(a, res, err, opts))
 		case opts.FetchOnly:
-			continue
-		case a.Route == RouteBrew, a.Route == RouteMas, a.Route == RouteMAU:
-			err = delegate(ctx, a, opts)
+			out = append(out, Outcome{Action: a, Result: "skipped"})
+		case a.Route == RouteBrew && len(a.Command) >= 4 && a.Command[2] == "--formula":
+			formulae = append(formulae, a)
+		case a.Route == RouteBrew && len(a.Command) >= 4 && a.Command[2] == "--cask":
+			casks = append(casks, a)
+		case a.Route == RouteMas, a.Route == RouteMAU:
+			err := delegate(ctx, a.Name, a.Command, opts)
+			out = append(out, record(a, "ran", err, opts))
 		default:
 			fmt.Fprintf(opts.Out, "skip   %s: %s\n", a.Name, a.Reason)
-			continue
-		}
-		logAction(a, err)
-		if err != nil {
-			failed++
-			fmt.Fprintf(opts.Err, "failed %s: %v\n", a.Name, err)
+			out = append(out, Outcome{Action: a, Result: "skipped"})
 		}
 	}
-	return failed
+	for _, batch := range [][]Action{formulae, casks} {
+		if len(batch) == 0 {
+			continue
+		}
+		cmd := append([]string{}, batch[0].Command[:3]...)
+		var names []string
+		for _, a := range batch {
+			names = append(names, a.Command[3])
+		}
+		cmd = append(cmd, names...)
+		err := delegate(ctx, fmt.Sprintf("%d Homebrew %s", len(batch), strings.TrimPrefix(batch[0].Command[2], "--")+"e"), cmd, opts)
+		for _, a := range batch {
+			out = append(out, record(a, "ran", err, opts))
+		}
+	}
+	return out
+}
+
+func record(a Action, result string, err error, opts Options) Outcome {
+	logAction(a, err)
+	if err != nil {
+		fmt.Fprintf(opts.Err, "failed %s: %v\n", a.Name, err)
+		return Outcome{Action: a, Result: "failed", Err: err}
+	}
+	return Outcome{Action: a, Result: result}
 }
 
 // delegate runs the package manager's own command with its output visible.
-func delegate(ctx context.Context, a Action, opts Options) error {
-	fmt.Fprintf(opts.Out, "run    %s: %s\n", a.Name, strings.Join(a.Command, " "))
-	path, err := exec.LookPath(a.Command[0])
+func delegate(ctx context.Context, label string, command []string, opts Options) error {
+	fmt.Fprintf(opts.Out, "run    %s: %s\n", label, strings.Join(command, " "))
+	path, err := exec.LookPath(command[0])
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, path, a.Command[1:]...)
+	cmd := exec.CommandContext(ctx, path, command[1:]...)
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = opts.Out, opts.Err, os.Stdin
 	cmd.Env = append(os.Environ(), "HOMEBREW_NO_ANALYTICS=1")
 	return cmd.Run()
+}
+
+// BrewUpdate refreshes Homebrew's metadata so the plan reflects what
+// `brew upgrade` would actually install, instead of letting the first
+// upgrade trigger an auto-update that changes the versions mid-run.
+func BrewUpdate(ctx context.Context, out, errw io.Writer) error {
+	path, err := exec.LookPath("brew")
+	if err != nil {
+		return nil // no Homebrew, nothing to refresh
+	}
+	cmd := exec.CommandContext(ctx, path, "update", "--quiet")
+	cmd.Stdout, cmd.Stderr = out, errw
+	cmd.Env = append(os.Environ(), "HOMEBREW_NO_ANALYTICS=1")
+	return cmd.Run()
+}
+
+// BrewVersions snapshots installed formula and cask versions, so the
+// dependency side effects of an upgrade can be reported afterwards.
+func BrewVersions(ctx context.Context) map[string]string {
+	path, err := exec.LookPath("brew")
+	if err != nil {
+		return nil
+	}
+	versions := map[string]string{}
+	for _, kind := range []string{"--formula", "--cask"} {
+		cmd := exec.CommandContext(ctx, path, "list", kind, "--versions")
+		cmd.Env = append(os.Environ(), "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_ANALYTICS=1")
+		raw, err := cmd.Output()
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			f := strings.Fields(line)
+			if len(f) >= 2 {
+				versions[f[0]] = f[len(f)-1]
+			}
+		}
+	}
+	return versions
 }
 
 const maxEnclosure = 1 << 30
@@ -80,39 +153,39 @@ func StagingDir() string {
 // application's own public key, and opens it unless fetching only. It never
 // replaces the application bundle: Sparkle's installer, or the user via
 // Finder, does that.
-func fetchSparkle(ctx context.Context, a Action, opts Options) error {
+func fetchSparkle(ctx context.Context, a Action, opts Options) (string, error) {
 	if a.Reason != "" && !opts.AllowUnverified {
 		fmt.Fprintf(opts.Out, "skip   %s: %s (use --allow-unverified to download anyway)\n", a.Name, a.Reason)
-		return nil
+		return "skipped", nil
 	}
 	u, err := url.Parse(a.URL)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
-		return errors.New("enclosure is not a public HTTPS URL")
+		return "failed", fmt.Errorf("enclosure is not an HTTPS URL, refusing to fetch it: %q", a.URL)
 	}
 	// One directory per download: opening a zip makes Archive Utility expand
 	// the .app beside it, and that belongs with its archive, not in the root.
 	dir := filepath.Join(StagingDir(), unsafeName.ReplaceAllString(a.Name+"-"+a.Available, "_"))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+		return "failed", err
 	}
 	fmt.Fprintf(opts.Out, "fetch  %s: %s\n", a.Name, a.URL)
 	data, finalURL, disposition, err := download(ctx, a.URL, maxEnclosure)
 	if err != nil {
-		return err
+		return "failed", err
 	}
 	dest := filepath.Join(dir, stagedName(a, finalURL, disposition, data))
 	if a.Length > 0 && int64(len(data)) != a.Length {
-		return fmt.Errorf("size %d does not match appcast length %d", len(data), a.Length)
+		return "failed", fmt.Errorf("size %d does not match appcast length %d", len(data), a.Length)
 	}
 	verified := false
 	if a.Signature != "" && a.PublicKey != "" {
 		if err := verifyEdDSA(data, a.Signature, a.PublicKey); err != nil {
-			return fmt.Errorf("EdDSA verification failed: %w (download discarded)", err)
+			return "failed", fmt.Errorf("EdDSA verification failed: %w (download discarded)", err)
 		}
 		verified = true
 	}
 	if err := os.WriteFile(dest, data, 0o644); err != nil {
-		return err
+		return "failed", err
 	}
 	// Mark the file as downloaded so Gatekeeper treats it like any other download.
 	_ = exec.CommandContext(ctx, "/usr/bin/xattr", "-w", "com.apple.quarantine", "0083;00000000;macup;", dest).Run()
@@ -122,10 +195,13 @@ func fetchSparkle(ctx context.Context, a Action, opts Options) error {
 	}
 	fmt.Fprintf(opts.Out, "staged %s: %s (%s, %d bytes)\n", a.Name, dest, status, len(data))
 	if opts.FetchOnly {
-		return nil
+		return "staged", nil
 	}
 	fmt.Fprintf(opts.Out, "open   %s: %s\n", a.Name, dest)
-	return exec.CommandContext(ctx, "/usr/bin/open", dest).Run()
+	if err := exec.CommandContext(ctx, "/usr/bin/open", dest).Run(); err != nil {
+		return "staged", err
+	}
+	return "opened", nil
 }
 
 // stagedName picks a filename for the enclosure. Vendors often publish the

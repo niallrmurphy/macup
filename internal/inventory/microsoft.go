@@ -98,6 +98,13 @@ func ScanMicrosoftWith(ctx context.Context, command MSUpdateCommand, convert Pli
 			return r
 		}
 		r.CheckStatus = "failed"
+		if !bytes.Contains(raw, []byte("<?xml")) {
+			// No property list at all: msupdate itself reported a problem (for
+			// example an XPC connection error to the updater). Show that, not
+			// a conversion error about the text that replaced the plist.
+			r.Warnings = append(r.Warnings, "msupdate produced no property list: "+firstMeaningfulLine(raw))
+			return r
+		}
 		r.Warnings = append(r.Warnings, "msupdate output conversion: "+err.Error()+"; msupdate output: "+diagnosticSnippet(raw))
 		return r
 	}
@@ -307,4 +314,23 @@ func parseUpdateAssistant(root map[string]json.RawMessage) ([]MicrosoftUpdate, b
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result, len(result) > 0
+}
+
+// firstMeaningfulLine returns the first non-empty line of msupdate's output
+// with terminal escapes removed, for a one-line diagnosis.
+func firstMeaningfulLine(raw []byte) string {
+	// msupdate separates its status lines with an erase-line escape rather
+	// than a newline; treat it as one.
+	text := strings.ReplaceAll(string(raw), "\x1b[2K", "\n")
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "Checking for updates") {
+			continue
+		}
+		if len(line) > 200 {
+			line = line[:200] + "..."
+		}
+		return line
+	}
+	return "(empty output)"
 }

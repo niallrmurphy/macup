@@ -63,13 +63,21 @@ func TableWith(w io.Writer, r inventory.Result, opts TableOptions) error {
 	}
 	rows := make([]row, 0, len(r.Entries))
 	hidden := 0
+	// Two bundles with the same name are told apart only by path, so show
+	// it for those even when paths are off.
+	nameCount := map[string]int{}
+	for _, e := range r.Entries {
+		if opts.keep(e.Status) && e.Path != "" {
+			nameCount[strings.ToLower(e.Name)]++
+		}
+	}
 	for _, e := range r.Entries {
 		if !opts.keep(e.Status) {
 			hidden++
 			continue
 		}
 		detail := e.Detail
-		if opts.Paths && e.Path != "" {
+		if (opts.Paths || nameCount[strings.ToLower(e.Name)] > 1) && e.Path != "" {
 			detail = e.Path
 			if e.Package != "" {
 				detail += " (cask:" + e.Package + ")"

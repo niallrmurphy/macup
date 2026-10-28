@@ -212,7 +212,7 @@ func lookupFeed(ctx context.Context, kind, feed, installed string) (*Lookup, err
 // --- iTunes Search API: public, keyless, keyed on bundle identifier ---
 
 func lookupITunes(ctx context.Context, bundleID, installed string) (*Lookup, error) {
-	body, _, err := fetchBytes(ctx, "https://itunes.apple.com/lookup?bundleId="+url.QueryEscape(bundleID), "application/json", 1<<20)
+	body, _, err := fetchBytes(ctx, "https://itunes.apple.com/lookup?bundleId="+url.QueryEscape(bundleID)+"&entity=macSoftware", "application/json", 1<<20)
 	if err != nil {
 		return nil, err
 	}
@@ -222,6 +222,7 @@ func lookupITunes(ctx context.Context, bundleID, installed string) (*Lookup, err
 func parseITunes(body []byte, installed string) (*Lookup, error) {
 	var resp struct {
 		Results []struct {
+			Kind         string `json:"kind"`
 			Version      string `json:"version"`
 			ReleaseDate  string `json:"currentVersionReleaseDate"`
 			TrackViewURL string `json:"trackViewUrl"`
@@ -232,11 +233,15 @@ func parseITunes(body []byte, installed string) (*Lookup, error) {
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, err
 	}
-	if len(resp.Results) == 0 {
-		return nil, nil
+	// A bundle identifier can name an iOS app too (Spotify's is shared); only a
+	// Mac listing says anything about the Mac build.
+	for _, x := range resp.Results {
+		if x.Kind != "mac-software" {
+			continue
+		}
+		return &Lookup{Source: "itunes", Version: x.Version, Released: x.ReleaseDate, URL: x.TrackViewURL, Comparison: comparison(installed, x.Version), Note: x.SellerURL}, nil
 	}
-	x := resp.Results[0]
-	return &Lookup{Source: "itunes", Version: x.Version, Released: x.ReleaseDate, URL: x.TrackViewURL, Comparison: comparison(installed, x.Version), Note: x.SellerURL}, nil
+	return nil, nil
 }
 
 // --- Homebrew cask index: borrowed, not maintained. Cached for a day. ---

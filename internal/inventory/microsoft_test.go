@@ -153,3 +153,14 @@ func TestMicrosoftUpdateAssistantSchema(t *testing.T) {
 		t.Fatal("unrelated dictionaries must not be read as updates")
 	}
 }
+
+func TestMicrosoftXPCErrorIsConcise(t *testing.T) {
+	cmd := func(context.Context) ([]byte, error) {
+		return []byte("\x1b[2K Checking for updates...\x1b[2K Error: Failed to connect to the updater (XPC connection invalid)\n"), nil
+	}
+	convert := func(_ context.Context, data []byte) ([]byte, error) { return nil, errors.New("plutil: not a plist") }
+	r := ScanMicrosoftWith(context.Background(), cmd, convert)
+	if r.CheckStatus != "failed" || len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "XPC connection invalid") || strings.Contains(r.Warnings[0], "plutil") {
+		t.Fatalf("%+v", r)
+	}
+}

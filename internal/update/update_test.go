@@ -2,9 +2,11 @@ package update
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
 
@@ -92,31 +94,65 @@ func TestVerifyEdDSA(t *testing.T) {
 func TestExecuteSkipsUnverifiableWithoutFlag(t *testing.T) {
 	var out, errb bytes.Buffer
 	plan := []Action{{Name: "X", Route: RouteSparkle, URL: "https://example.org/x.dmg", Reason: "enclosure cannot be signature-verified"}}
-	if failed := Execute(nil, plan, Options{FetchOnly: true, Out: &out, Err: &errb}); failed != 0 || !strings.Contains(out.String(), "skip   X") {
-		t.Fatal(failed, out.String())
+	outcomes := Execute(context.Background(), plan, Options{FetchOnly: true, Out: &out, Err: &errb})
+	if len(outcomes) != 1 || outcomes[0].Result != "skipped" || !strings.Contains(out.String(), "skip   X") {
+		t.Fatal(outcomes, out.String())
 	}
 }
 
-func TestStagedName(t *testing.T) {
-	a := Action{Name: "HandBrake", Available: "1.11.2", URL: "https://handbrake.fr/rotation.php?file=HandBrake-1.11.2.dmg&update=true"}
-	dmg := append(make([]byte, 600), []byte("koly")...)
-	dmg = append(dmg, make([]byte, 508)...)
-	if got := stagedName(a, "https://github.com/HandBrake/HandBrake/releases/download/1.11.2/HandBrake-1.11.2.dmg", "", dmg); got != "HandBrake-1.11.2.dmg" {
-		t.Fatal(got)
+func TestSummariseDistinguishesStagedFromInstalled(t *testing.T) {
+	outcomes := []Outcome{
+		{Action: Action{Name: "iTerm2", Route: RouteSparkle, Available: "3.7.6"}, Result: "opened"},
+		{Action: Action{Name: "BetterDisplay", Route: RouteSparkle, Available: "3.9"}, Result: "opened"},
+		{Action: Action{Name: "node", Route: RouteBrew, Command: []string{"brew", "upgrade", "--formula", "node"}}, Result: "ran"},
+		{Action: Action{Name: "Mirage", Route: RouteSparkle}, Result: "failed", Err: errors.New("signature does not match")},
+		{Action: Action{Name: "Kobo", Route: RouteAdvice}, Result: "skipped"},
 	}
-	if got := stagedName(a, a.URL, "", dmg); got != "HandBrake-1.11.2.dmg" {
-		t.Fatal("file= query parameter should name the download:", got)
+	after := inventory.Result{Entries: []inventory.Entry{
+		{Name: "iTerm2", Status: "OUTDATED", Available: "3.7.6"},
+		{Name: "BetterDisplay", Status: "CURRENT"},
+		{Name: "node", Status: "CURRENT"},
+		{Name: "ai-pim-utils", Status: "OUTDATED", Available: "2.0"},
+	}}
+	before := map[string]string{"node": "26.12.1", "openssl@3": "3.6.3", "gone": "1"}
+	afterBrew := map[string]string{"node": "26.12.1_1", "openssl@3": "3.5.9", "python@3.15": "3.15.2"}
+	s := Summarise(outcomes, after, before, afterBrew)
+	if strings.Join(s.Updated, ",") != "BetterDisplay,node" {
+		t.Fatalf("updated: %v", s.Updated)
 	}
-	if got := stagedName(Action{Name: "X", Available: "2", URL: "https://x.example/get"}, "https://x.example/get", `attachment; filename="X-2.zip"`, nil); got != "X-2.zip" {
-		t.Fatal(got)
+	if strings.Join(s.Staged, ",") != "iTerm2 3.7.6" {
+		t.Fatalf("staged: %v", s.Staged)
 	}
-	if got := stagedName(Action{Name: "Odd App", Available: "3", URL: "https://x.example/get"}, "https://x.example/get", "", dmg); got != "Odd_App-3.dmg" {
-		t.Fatal(got)
+	if len(s.Failed) != 1 || !strings.Contains(s.Failed[0], "Mirage") || strings.Join(s.Skipped, ",") != "Kobo" {
+		t.Fatalf("%+v", s)
 	}
-	if got := sniffExtension([]byte("PK\x03\x04rest")); got != ".zip" {
-		t.Fatal(got)
+	if strings.Join(s.NewlyOut, ",") != "ai-pim-utils 2.0" {
+		t.Fatalf("newly: %v", s.NewlyOut)
 	}
-	if got := sniffExtension([]byte("xar!....")); got != ".pkg" {
-		t.Fatal(got)
+	if strings.Join(s.Dependencies, ",") != "gone (removed),openssl@3 3.6.3 -> 3.5.9,python@3.15 3.15.2 (new)" {
+		t.Fatalf("deps: %v", s.Dependencies)
+	}
+	var b bytes.Buffer
+	s.Print(&b)
+	if !strings.Contains(b.String(), "not yet installed") {
+		t.Fatal(b.String())
+	}
+}
+
+func TestExecuteBatchesHomebrew(t *testing.T) {
+	var out, errb bytes.Buffer
+	plan := []Action{
+		{Name: "a", Route: RouteBrew, Command: []string{"brew-does-not-exist", "upgrade", "--formula", "a"}},
+		{Name: "b", Route: RouteBrew, Command: []string{"brew-does-not-exist", "upgrade", "--formula", "b"}},
+		{Name: "c", Route: RouteBrew, Command: []string{"brew-does-not-exist", "upgrade", "--cask", "c"}},
+	}
+	outcomes := Execute(context.Background(), plan, Options{Out: &out, Err: &errb})
+	if len(outcomes) != 3 || !strings.Contains(out.String(), "upgrade --formula a b") || !strings.Contains(out.String(), "upgrade --cask c") {
+		t.Fatal(out.String())
+	}
+	for _, o := range outcomes {
+		if o.Result != "failed" {
+			t.Fatalf("missing brew should fail every batched action: %+v", o)
+		}
 	}
 }

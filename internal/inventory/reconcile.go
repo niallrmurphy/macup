@@ -54,6 +54,7 @@ func Reconcile(r *Result) {
 					e.Status = status
 					if p.Outdated {
 						e.UpdateSource = "homebrew"
+						e.Detail = backwardsNote(p.Installed, p.Current)
 					}
 					e.Available = p.Current
 					// Bundle version is the observed app version, which may differ
@@ -61,7 +62,7 @@ func Reconcile(r *Result) {
 					continue
 				}
 			}
-			entries = append(entries, Entry{Name: p.Name, Installed: p.Installed, Available: p.Current, Status: status, Sources: []string{source}, Package: p.Name, UpdateSource: updateSource(p.Outdated, "homebrew")})
+			entries = append(entries, Entry{Name: p.Name, Installed: p.Installed, Available: p.Current, Status: status, Detail: backwardsNote(p.Installed, p.Current), Sources: []string{source}, Package: p.Name, UpdateSource: updateSource(p.Outdated, "homebrew")})
 		}
 	}
 	if r.AppStore != nil {
@@ -121,6 +122,17 @@ func identityPath(s string) string {
 func updateSource(outdated bool, source string) string {
 	if outdated {
 		return source
+	}
+	return ""
+}
+
+// backwardsNote explains an "outdated" entry whose available version sorts
+// below the installed one: Homebrew's version_scheme can legitimately move
+// a formula to a lower number (openssl@3 3.6.3 -> 3.5.9).
+func backwardsNote(installed, current string) string {
+	c, ok := compareBuilds(current, installed)
+	if ok && c < 0 {
+		return "Homebrew reports this as an upgrade although the version number is lower (version scheme change)"
 	}
 	return ""
 }
