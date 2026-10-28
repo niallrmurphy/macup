@@ -25,8 +25,7 @@ machine (see [What leaves the machine](#what-leaves-the-machine)).
 ## Install
 
 With Homebrew, which installs a prebuilt binary on Apple silicon running
-macOS 26 or newer, builds from source elsewhere (installing Go itself to do
-so), and keeps it updated with `brew upgrade`:
+macOS 26 or newer and keeps it updated with `brew upgrade`:
 
 ```sh
 brew install niallrmurphy/macup/macup
@@ -52,6 +51,11 @@ Other routes:
 
 - **From source**, with Go 1.22 or newer:
   `go install github.com/niallrmurphy/macup/cmd/macup@latest`.
+
+On an Intel Mac, or on Apple silicon older than macOS 26, Homebrew builds
+from source, and since Homebrew no longer ships an Intel bottle for Go that
+means building Go too. The release tarball is universal, so it is the
+quicker route there.
 
 ## Requirements
 
