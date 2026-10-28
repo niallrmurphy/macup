@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -180,7 +181,14 @@ func fetchSparkle(ctx context.Context, a Action, opts Options) (string, error) {
 	verified := false
 	if a.Signature != "" && a.PublicKey != "" {
 		if err := verifyEdDSA(data, a.Signature, a.PublicKey); err != nil {
-			return "failed", fmt.Errorf("EdDSA verification failed: %w (download discarded)", err)
+			hint := ""
+			if !namesApp(path.Base(u.Path), a.Name) {
+				// A feed that now serves a differently named product has usually
+				// been renamed and re-keyed by the vendor; the installed app's key
+				// cannot verify it and Sparkle itself would refuse too.
+				hint = fmt.Sprintf("; the enclosure %q does not name %q, so the vendor may have renamed or re-keyed the product", path.Base(u.Path), a.Name)
+			}
+			return "failed", fmt.Errorf("EdDSA verification failed: %w (download discarded)%s", err, hint)
 		}
 		verified = true
 	}
@@ -337,4 +345,15 @@ func logAction(a Action, err error) {
 	}
 	defer f.Close()
 	_, _ = f.Write(append(raw, '\n'))
+}
+
+// namesApp reports whether a filename contains the app's name, ignoring
+// case, spaces, URL escapes and punctuation.
+func namesApp(filename, app string) bool {
+	squash := func(s string) string {
+		s, _ = url.PathUnescape(s)
+		return unsafeName.ReplaceAllString(strings.ToLower(strings.ReplaceAll(s, " ", "")), "")
+	}
+	a := squash(app)
+	return a == "" || strings.Contains(squash(filename), a)
 }

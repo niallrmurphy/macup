@@ -397,7 +397,7 @@ func checkSparkle(ctx context.Context, apps []Application, fetch AppcastFetcher,
 				if bestShort == "" {
 					bestShort = it.Enclosure.Short
 				}
-				c.EnclosureURL, c.EdSignature, c.EnclosureLength = it.Enclosure.URL, it.Enclosure.EdSig, it.Enclosure.Length
+				c.EnclosureURL, c.EdSignature, c.EnclosureLength = resolveEnclosure(feed, it.Enclosure.URL), it.Enclosure.EdSig, it.Enclosure.Length
 			}
 		}
 		if best != a.Build {
@@ -524,4 +524,21 @@ done:
 		return "", err
 	}
 	return target, nil
+}
+
+// resolveEnclosure makes a relative enclosure URL absolute against the feed,
+// as Sparkle does (Tailscale's appcast lists "Tailscale-1.105.110-macos.zip").
+func resolveEnclosure(feed, enclosure string) string {
+	if enclosure == "" {
+		return ""
+	}
+	base, err := url.Parse(feed)
+	if err != nil {
+		return enclosure
+	}
+	ref, err := url.Parse(enclosure)
+	if err != nil {
+		return enclosure
+	}
+	return base.ResolveReference(ref).String()
 }

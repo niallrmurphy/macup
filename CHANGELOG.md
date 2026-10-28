@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Sparkle enclosures given as relative URLs (Tailscale's appcast lists
+  `Tailscale-1.105.110-macos.zip`) are resolved against the feed URL, as
+  Sparkle does, instead of being rejected as non-HTTPS.
+- When an EdDSA check fails and the enclosure does not even name the
+  installed app, the error says the vendor may have renamed or re-keyed the
+  product (Mirage Host's feed now serves Mirage Beacon).
+
 ## 1.0.1 (2026-10-28)
 
 Fixes and improvements from the first field report on 1.0.0.

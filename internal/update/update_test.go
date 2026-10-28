@@ -156,3 +156,9 @@ func TestExecuteBatchesHomebrew(t *testing.T) {
 		}
 	}
 }
+
+func TestNamesApp(t *testing.T) {
+	if !namesApp("Mirage%20Host-1.3.1.dmg", "Mirage Host") || namesApp("Mirage%20Beacon-1.3.1-1020181.dmg", "Mirage Host") || !namesApp("iTerm2-3_7_6.zip", "iTerm2") {
+		t.Fatal("namesApp")
+	}
+}

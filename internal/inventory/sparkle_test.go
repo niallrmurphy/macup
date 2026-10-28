@@ -197,3 +197,15 @@ func TestSparkleNotFlaggedKeepsSource(t *testing.T) {
 		t.Fatalf("entries=%+v", r.Entries)
 	}
 }
+
+func TestResolveEnclosureRelativeToFeed(t *testing.T) {
+	if got := resolveEnclosure("https://pkgs.tailscale.com/stable/appcast.xml", "Tailscale-1.105.110-macos.zip"); got != "https://pkgs.tailscale.com/stable/Tailscale-1.105.110-macos.zip" {
+		t.Fatal(got)
+	}
+	if got := resolveEnclosure("https://x.example/feed.xml", "https://cdn.example/App.dmg"); got != "https://cdn.example/App.dmg" {
+		t.Fatal(got)
+	}
+	if got := resolveEnclosure("https://x.example/a/feed.xml", "/dl/App.zip"); got != "https://x.example/dl/App.zip" {
+		t.Fatal(got)
+	}
+}
