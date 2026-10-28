@@ -22,9 +22,11 @@ lipo -info dist/macup
 # The Homebrew formula pins the sha256 of GitHub's source tarball for the tag,
 # which only exists once the tag is pushed; print it when it is available.
 src="https://github.com/niallrmurphy/macup/archive/refs/tags/v${version}.tar.gz"
-if sum="$(curl -fsSL "$src" | shasum -a 256 | cut -d' ' -f1)"; then
+tmp="$(mktemp)"
+if curl -fsSL -o "$tmp" "$src" && [ -s "$tmp" ]; then
   echo "formula: url \"$src\""
-  echo "formula: sha256 \"$sum\""
+  echo "formula: sha256 \"$(shasum -a 256 "$tmp" | cut -d' ' -f1)\""
 else
   echo "formula: push tag v${version} first, then re-run to get the source tarball sha256"
 fi
+rm -f "$tmp"
