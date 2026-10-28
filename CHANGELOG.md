@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.1 (2026-10-28)
 
 Fixes and improvements from the first field report on 1.0.0.
 
