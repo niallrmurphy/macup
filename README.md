@@ -421,10 +421,13 @@ used as evidence that an application is up to date.
 
 ### Experimental long-tail probe
 
+If you're stuck looking for updates for particularly obscure pieces of software,
+you can try using `macup probe`.
+
 `macup probe` is an **experimental**, independent discovery tool. It does **not**
 modify the statuses produced by `macup scan`, and does not execute application
-updaters or install anything. Its JSON is evidence for human review, not an
-assertion that an update is applicable.
+updaters or install anything. Its output is so that humans can review to see
+if there's anything promising.
 
 ```sh
 ./macup probe "/Applications/Nisus Writer Pro.app"                  # local evidence only, no network
