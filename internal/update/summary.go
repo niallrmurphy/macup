@@ -34,7 +34,7 @@ func Summarise(outcomes []Outcome, after inventory.Result, brewBefore, brewAfter
 	for _, o := range outcomes {
 		name := o.Action.Name
 		planned[strings.ToLower(name)] = true
-		if o.Action.Route == RouteBrew {
+		if (o.Action.Route == RouteBrew || o.Action.Route == RouteAdopt) && len(o.Action.Command) > 0 {
 			planned[strings.ToLower(o.Action.Command[len(o.Action.Command)-1])] = true
 		}
 		still := outdated[strings.ToLower(name)]
@@ -42,6 +42,9 @@ func Summarise(outcomes []Outcome, after inventory.Result, brewBefore, brewAfter
 		case o.Result == "failed":
 			s.Failed = append(s.Failed, name+": "+o.Err.Error())
 		case o.Result == "skipped":
+			if o.Action.Route == RouteAdopt {
+				name += " (re-run with --adopt)"
+			}
 			s.Skipped = append(s.Skipped, name)
 		case o.Result == "staged" || o.Result == "opened":
 			if still {
@@ -97,7 +100,7 @@ func (s Summary) Print(w io.Writer) {
 	section("Still outdated after running", s.StillOut)
 	section("Newly outdated since the plan (Homebrew metadata moved during the run)", s.NewlyOut)
 	section("Also changed by Homebrew as dependencies", s.Dependencies)
-	section("Skipped (no automated route)", s.Skipped)
+	section("Skipped (no automated route, or route not enabled)", s.Skipped)
 	section("Failed", s.Failed)
 	if len(s.Updated)+len(s.Staged)+len(s.StillOut)+len(s.Failed)+len(s.Skipped) == 0 {
 		fmt.Fprintln(w, "Nothing to do.")

@@ -7,6 +7,7 @@ package update
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -21,6 +22,7 @@ const (
 	RouteMas     = "mas"           // mas upgrade
 	RouteMAU     = "msupdate"      // Microsoft AutoUpdate --install
 	RouteSparkle = "sparkle-fetch" // download enclosure, verify EdDSA, open
+	RouteAdopt   = "brew-adopt"    // brew install --cask --force: replace an app Homebrew does not own with the cask's build (needs --adopt)
 	RouteAdvice  = "manual"        // nothing to run; Reason says what to do
 )
 
@@ -99,8 +101,15 @@ func Plan(r inventory.Result) []Action {
 			}
 		case e.UpdateSource == "adobe-catalog":
 			a.Route, a.Reason = RouteAdvice, "update through the Creative Cloud app"
-		case e.UpdateSource == "homebrew-cask" || e.UpdateSource == "itunes":
-			a.Route, a.Reason = RouteAdvice, "newer version published ("+e.UpdateSource+"); install it through the vendor's channel or adopt the cask with brew"
+		case e.UpdateSource == "homebrew-cask":
+			if e.Package == "" {
+				a.Route, a.Reason = RouteAdvice, "newer version in the Homebrew cask index, but no single cask ships this app by name; install it through the vendor's channel"
+			} else {
+				a.Route, a.Command = RouteAdopt, adoptCommand(e.Package, e.Path)
+				a.Reason = "not installed through Homebrew; replaces the app with the cask's build and hands future upgrades to brew"
+			}
+		case e.UpdateSource == "itunes":
+			a.Route, a.Reason = RouteAdvice, "newer version in the App Store catalogue; install it from the App Store or the vendor's channel"
 		default:
 			a.Route, a.Reason = RouteAdvice, "newer version reported by "+e.UpdateSource+"; no automated route"
 		}
@@ -115,8 +124,23 @@ func Plan(r inventory.Result) []Action {
 	return plan
 }
 
+// adoptCommand builds the Homebrew invocation that brings an app installed
+// outside Homebrew under its cask. `brew install --adopt` only accepts a
+// bundle whose version already matches the cask's, which an outdated app by
+// definition does not, so the existing bundle is overwritten with --force
+// instead. The cask is pointed at the directory the app actually lives in;
+// otherwise Homebrew would put a second copy in /Applications and leave the
+// old one where it was.
+func adoptCommand(token, path string) []string {
+	cmd := []string{"brew", "install", "--cask"}
+	if dir := filepath.Dir(path); path != "" && dir != "/Applications" {
+		cmd = append(cmd, "--appdir="+dir)
+	}
+	return append(cmd, "--force", token)
+}
+
 func routeRank(r string) int {
-	for i, x := range []string{RouteBrew, RouteMas, RouteMAU, RouteSparkle, RouteAdvice} {
+	for i, x := range []string{RouteBrew, RouteMas, RouteMAU, RouteSparkle, RouteAdopt, RouteAdvice} {
 		if x == r {
 			return i
 		}
@@ -159,6 +183,8 @@ func PrintPlan(w io.Writer, plan []Action) error {
 		switch a.Route {
 		case RouteBrew, RouteMas, RouteMAU:
 			action = strings.Join(a.Command, " ")
+		case RouteAdopt:
+			action = strings.Join(a.Command, " ") + " [replaces the app; runs only with --adopt]"
 		case RouteSparkle:
 			action = "download " + a.URL
 			if a.Reason != "" {
@@ -172,7 +198,7 @@ func PrintPlan(w io.Writer, plan []Action) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(w, "\n%d actions: %d brew, %d mas, %d msupdate, %d sparkle downloads, %d manual\n", len(plan), counts[RouteBrew], counts[RouteMas], counts[RouteMAU], counts[RouteSparkle], counts[RouteAdvice])
+	_, err := fmt.Fprintf(w, "\n%d actions: %d brew, %d mas, %d msupdate, %d sparkle downloads, %d cask adoptions, %d manual\n", len(plan), counts[RouteBrew], counts[RouteMas], counts[RouteMAU], counts[RouteSparkle], counts[RouteAdopt], counts[RouteAdvice])
 	return err
 }
 

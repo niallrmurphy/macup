@@ -22,14 +22,17 @@ func TestPlanRoutes(t *testing.T) {
 			{Name: "Microsoft Outlook", Status: "OUTDATED", Sources: []string{"apps", "microsoft"}, UpdateSource: "microsoft-autoupdate"},
 			{Name: "Arc", Status: "OUTDATED", Sources: []string{"apps", "sparkle"}, UpdateSource: "sparkle", Path: "/Applications/NotInstalled-Test.app"},
 			{Name: "Lightroom", Status: "OUTDATED", Sources: []string{"apps", "adobe"}, UpdateSource: "adobe-catalog"},
-			{Name: "calibre", Status: "OUTDATED", Sources: []string{"apps", "lookup"}, UpdateSource: "homebrew-cask"},
+			{Name: "calibre", Status: "OUTDATED", Sources: []string{"apps", "lookup"}, UpdateSource: "homebrew-cask", Package: "calibre", Path: "/Applications/calibre.app"},
+			{Name: "Zotero", Status: "OUTDATED", Sources: []string{"apps", "lookup"}, UpdateSource: "homebrew-cask", Package: "zotero", Path: "/Users/me/Applications/Zotero.app"},
+			{Name: "Kobo", Status: "OUTDATED", Sources: []string{"apps", "lookup"}, UpdateSource: "homebrew-cask", Path: "/Applications/Kobo.app"},
+			{Name: "Magnet", Status: "OUTDATED", Sources: []string{"apps", "lookup"}, UpdateSource: "itunes", Path: "/Applications/Magnet.app"},
 			{Name: "Fine", Status: "CURRENT", Sources: []string{"apps"}},
 		},
 		Microsoft: &inventory.MicrosoftResult{Updates: []inventory.MicrosoftUpdate{{ID: "OPIM2019", Name: "Microsoft Outlook", AvailableVersion: "16.114.2"}}},
 		Sparkle:   &inventory.SparkleResult{Checks: []inventory.SparkleCheck{{Path: "/Applications/NotInstalled-Test.app", Status: "OUTDATED", EnclosureURL: "https://releases.arc.net/Arc.zip", EdSignature: "sig", EnclosureLength: 10}}},
 	}
 	plan := Plan(r)
-	if len(plan) != 7 {
+	if len(plan) != 10 {
 		t.Fatalf("%d actions", len(plan))
 	}
 	byName := map[string]Action{}
@@ -54,18 +57,67 @@ func TestPlanRoutes(t *testing.T) {
 	if a := byName["Lightroom"]; a.Route != RouteAdvice {
 		t.Fatalf("%+v", a)
 	}
-	if a := byName["calibre"]; a.Route != RouteAdvice || !strings.Contains(a.Reason, "homebrew-cask") {
+	if a := byName["calibre"]; a.Route != RouteAdopt || strings.Join(a.Command, " ") != "brew install --cask --force calibre" || a.Reason == "" {
 		t.Fatalf("%+v", a)
 	}
-	if plan[0].Route != RouteBrew || plan[len(plan)-1].Route != RouteAdvice {
-		t.Fatalf("plan should be ordered by route: %+v", plan)
+	if a := byName["Zotero"]; a.Route != RouteAdopt || strings.Join(a.Command, " ") != "brew install --cask --appdir=/Users/me/Applications --force zotero" {
+		t.Fatalf("app outside /Applications must be replaced in place: %+v", a)
+	}
+	if a := byName["Kobo"]; a.Route != RouteAdvice || len(a.Command) != 0 || !strings.Contains(a.Reason, "no single cask ships") {
+		t.Fatalf("no token, no adoption: %+v", a)
+	}
+	if a := byName["Magnet"]; a.Route != RouteAdvice || !strings.Contains(a.Reason, "App Store") {
+		t.Fatalf("%+v", a)
+	}
+	if plan[0].Route != RouteBrew || plan[len(plan)-1].Route != RouteAdvice || routeRank(RouteAdopt) >= routeRank(RouteAdvice) || routeRank(RouteAdopt) <= routeRank(RouteSparkle) {
+		t.Fatalf("plan should be ordered by route, adoptions just before manual: %+v", plan)
 	}
 	if f := Filter(plan, []string{"outlook", "ZED"}); len(f) != 2 {
 		t.Fatalf("%+v", f)
 	}
 	var b bytes.Buffer
-	if err := PrintPlan(&b, plan); err != nil || !strings.Contains(b.String(), "7 actions: 2 brew, 1 mas, 1 msupdate, 1 sparkle downloads, 2 manual") {
+	if err := PrintPlan(&b, plan); err != nil || !strings.Contains(b.String(), "10 actions: 2 brew, 1 mas, 1 msupdate, 1 sparkle downloads, 2 cask adoptions, 3 manual") {
 		t.Fatal(b.String(), err)
+	}
+	if !strings.Contains(b.String(), "brew install --cask --force calibre [replaces the app; runs only with --adopt]") {
+		t.Fatal(b.String())
+	}
+}
+
+func TestExecuteAdoptNeedsFlag(t *testing.T) {
+	plan := []Action{
+		{Name: "d", Route: RouteAdopt, Command: []string{"brew-does-not-exist", "install", "--cask", "--force", "d"}},
+		{Name: "e", Route: RouteAdopt, Command: []string{"brew-does-not-exist", "install", "--cask", "--appdir=/Users/me/Applications", "--force", "e"}},
+		{Name: "f", Route: RouteAdopt, Command: []string{"brew-does-not-exist", "install", "--cask", "--force", "f"}},
+	}
+	var out, errb bytes.Buffer
+	outcomes := Execute(context.Background(), plan, Options{Out: &out, Err: &errb})
+	for _, o := range outcomes {
+		if o.Result != "skipped" {
+			t.Fatalf("adoption must not run without --adopt: %+v", o)
+		}
+	}
+	if !strings.Contains(out.String(), "skip   d: brew-does-not-exist install --cask --force d (re-run with --adopt") {
+		t.Fatal(out.String())
+	}
+	s := Summarise(outcomes, inventory.Result{}, nil, nil)
+	if strings.Join(s.Skipped, ",") != "d (re-run with --adopt),e (re-run with --adopt),f (re-run with --adopt)" {
+		t.Fatalf("%+v", s.Skipped)
+	}
+
+	out.Reset()
+	outcomes = Execute(context.Background(), plan, Options{Adopt: true, Out: &out, Err: &errb})
+	if !strings.Contains(out.String(), "run    2 Homebrew cask adoptions: brew-does-not-exist install --cask --force d f") || !strings.Contains(out.String(), "--appdir=/Users/me/Applications --force e\n") {
+		t.Fatalf("adoptions with the same prefix batch, different appdirs do not:\n%s", out.String())
+	}
+	for _, o := range outcomes {
+		if o.Result != "failed" {
+			t.Fatalf("missing brew should fail every adoption: %+v", o)
+		}
+	}
+	after := inventory.Result{}
+	if s := Summarise(outcomes, after, map[string]string{}, map[string]string{"d": "1.0"}); len(s.Dependencies) != 0 {
+		t.Fatalf("an adopted cask is planned, not a dependency: %+v", s.Dependencies)
 	}
 }
 

@@ -155,6 +155,7 @@ func run(args []string) int {
 		yes := fs.Bool("yes", false, "execute the plan; without it only the plan is printed")
 		fetchOnly := fs.Bool("fetch-only", false, "download and verify Sparkle updates into the staging directory, nothing else")
 		allowUnverified := fs.Bool("allow-unverified", false, "download Sparkle enclosures that cannot be signature-verified (not recommended)")
+		adopt := fs.Bool("adopt", false, "with --yes: bring apps that match a Homebrew cask under Homebrew (brew install --cask --force TOKEN); replaces the installed app")
 		only := fs.String("only", "", "comma-separated names (case-insensitive substrings) to limit the plan to")
 		quietFlag := fs.Bool("quiet", false, "suppress scan progress messages on stderr")
 		freshFlag := fs.Bool("fresh", false, "ignore cached provider results for the scan")
@@ -197,9 +198,15 @@ func run(args []string) int {
 				return 1
 			}
 			fmt.Fprintln(os.Stderr, "Plan only. Re-run with --yes to execute, or --fetch-only to download and verify Sparkle updates.")
+			for _, a := range plan {
+				if a.Route == update.RouteAdopt {
+					fmt.Fprintln(os.Stderr, "brew-adopt actions replace an app Homebrew does not own; they run only with --yes --adopt.")
+					break
+				}
+			}
 			return 0
 		}
-		opts := update.Options{FetchOnly: *fetchOnly, AllowUnverified: *allowUnverified, Out: os.Stdout, Err: os.Stderr}
+		opts := update.Options{FetchOnly: *fetchOnly, AllowUnverified: *allowUnverified, Adopt: *adopt, Out: os.Stdout, Err: os.Stderr}
 		brewBefore := update.BrewVersions(context.Background())
 		outcomes := update.Execute(context.Background(), plan, opts)
 		failed := 0
@@ -710,7 +717,7 @@ func usage() {
 Usage:
   macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle,adobe,lookup] [--offline] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--lookup|--no-lookup] [--cache-ttl 1h] [--fresh] [--quiet] [--verbose] [--all] [--status "NO SOURCE"] [--paths] [--roots /Applications,/Users/me/Applications]
   macup version
-  macup update [--only NAME,...] [--yes | --fetch-only] [--allow-unverified] [--skip-brew-update] [--no-rescan] [--fresh] [--quiet]
+  macup update [--only NAME,...] [--yes [--adopt] | --fetch-only] [--allow-unverified] [--skip-brew-update] [--no-rescan] [--fresh] [--quiet]
   macup probe [--lookup] [--origins] [--fetch] [--model llama3.2:latest] [--max-pages 3] /Applications/Example.app
   macup probe --all [--roots /Applications] [--include-system] [--lookup] [--origins] [--fetch] [--model MODEL] [--workers 2]
   macup doctor [--roots /Applications]

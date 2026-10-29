@@ -250,6 +250,7 @@ untrusted, especially on untrusted machines.
 ./macup update                      # print the plan; nothing runs
 ./macup update --only slack,iterm   # limit the plan by name
 ./macup update --yes                # execute the plan
+./macup update --yes --adopt        # also bring cask-matched apps under Homebrew
 ./macup update --fetch-only         # download and verify Sparkle updates only
 ```
 
@@ -269,6 +270,7 @@ or OpenSSL. `--no-rescan` skips that step.
 | `mas` | `mas upgrade ID` | the App Store |
 | `msupdate` | Microsoft AutoUpdate's `msupdate --install --apps ID` | Microsoft AutoUpdate |
 | `sparkle-fetch` | downloads the appcast enclosure, verifies it, opens it | you, from the opened disk image or archive |
+| `brew-adopt` | `brew install --cask --force TOKEN`, only with `--adopt` | Homebrew, which then owns future upgrades |
 | `manual` | nothing; the ACTION column says where to go | you |
 
 The Sparkle route never replaces an application bundle: Sparkle's own
@@ -286,12 +288,24 @@ Gatekeeper treats them like any other download. `--fetch-only` stops after
 staging. Every executed or failed action is appended to
 `~/Library/Caches/macup/update.log`.
 
-Apps whose newer version came only from a catalogue (`homebrew-cask`,
-`itunes`) or a derived feed get a `manual` route: macup has a version number
-but no vendor-signed artefact to fetch. For a cask that is not yet installed
-through Homebrew, `brew install --cask --adopt TOKEN` may bring it under
-Homebrew for future upgrades. Adobe and other vendor-managed apps are routed
-to their own updater.
+An app that is not installed through Homebrew, when exactly one cask ships
+an app with its filename, gets a `brew-adopt` route. A match made by tie-break
+or by bundle identifier alone is reported but never adopted. The plan shows
+the command; it runs only with
+`--yes --adopt`, because it replaces the app bundle with the cask's build and
+hands future upgrades to Homebrew. Homebrew's own `--adopt` flag is not used:
+it accepts only a bundle whose version already matches the cask's, which an
+outdated app never does, so macup passes `--force` to overwrite the old
+bundle. An app living outside `/Applications` gets `--appdir` pointing at its
+own directory, so Homebrew replaces it in place rather than installing a
+second copy. Homebrew verifies the download against the cask's checksum, but
+it is the cask's build that lands, not necessarily the vendor's direct
+download, and a running app is not quit first.
+
+Apps whose newer version came from the App Store catalogue (`itunes`), from
+a cask that could not be matched unambiguously, or from a derived feed get a
+`manual` route: macup has a version number but no vendor-signed artefact to
+fetch. Adobe and other vendor-managed apps are routed to their own updater.
 
 ## What leaves the machine
 

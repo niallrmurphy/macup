@@ -389,11 +389,25 @@ func TestCaskIndexMatching(t *testing.T) {
 	if c, _ = idx.match(inventory.Application{BundleID: "com.google.Chrome", Path: "/Applications/Google Chrome.app"}); c != nil {
 		t.Fatalf("Chrome must not match a cask that merely quits it: %+v", c)
 	}
-	if c, _ = idx.match(inventory.Application{BundleID: "us.zoom.xos", Path: "/Applications/zoom.us.app"}); c == nil || c.Token != "zoom" {
+	c, note := idx.match(inventory.Application{BundleID: "us.zoom.xos", Path: "/Applications/zoom.us.app"})
+	if c == nil || c.Token != "zoom" {
 		t.Fatalf("pkg cask by bundle: %+v", c)
+	}
+	if l := caskLookup(c, note, "5.0.0"); l.Package != "" || l.Version != "6.0.0" {
+		t.Fatalf("bundle-id match reports a version but no token: %+v", l)
 	}
 	if c, _ = idx.match(inventory.Application{BundleID: "com.getdropbox.dropbox", Path: "/Applications/Dropbox.app"}); c == nil || c.Token != "dropbox" {
 		t.Fatalf("bundle should break app-name tie: %+v", c)
+	}
+	if l := caskLookup(c, "", "270.0"); l.Package != "dropbox" || l.Version != "274.4" || l.Comparison != "newer" {
+		t.Fatalf("unambiguous match exposes its token: %+v", l)
+	}
+	c, note = idx.match(inventory.Application{Path: "/Applications/Dropbox.app"})
+	if c == nil || !strings.Contains(note, "ambiguous") {
+		t.Fatalf("no bundle id, two casks: %+v %q", c, note)
+	}
+	if l := caskLookup(c, note, "270.0"); l.Package != "" || l.Version == "" {
+		t.Fatalf("ambiguous match reports a version but no token: %+v", l)
 	}
 }
 

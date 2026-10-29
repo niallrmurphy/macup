@@ -54,6 +54,7 @@ type Lookup struct {
 	URL        string `json:"url,omitempty"`
 	Comparison string `json:"comparison"`
 	Note       string `json:"note,omitempty"`
+	Package    string `json:"package,omitempty"` // package-manager token (Homebrew cask) when one cask matched unambiguously
 }
 
 // Origin is where macOS recorded the application was downloaded from.

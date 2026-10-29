@@ -126,7 +126,7 @@ func LookupVersions(ctx context.Context, app inventory.Application) ([]inventory
 	lookups(ctx, &r)
 	var out []inventory.LookupVerdict
 	for _, l := range r.Lookups {
-		out = append(out, inventory.LookupVerdict{Source: l.Source, Version: l.Version, Comparison: l.Comparison, URL: l.URL, Note: l.Note})
+		out = append(out, inventory.LookupVerdict{Source: l.Source, Version: l.Version, Comparison: l.Comparison, URL: l.URL, Note: l.Note, Package: l.Package})
 	}
 	return out, r.Warnings
 }

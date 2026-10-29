@@ -368,19 +368,32 @@ func lookupCask(ctx context.Context, app inventory.Application, installed string
 	if c == nil {
 		return nil, nil, nil
 	}
+	return caskLookup(c, note, installed), c, nil
+}
+
+// caskLookup reports the cask's version against the installed one. The token
+// is exposed as Package only for a clean match, meaning exactly one cask
+// ships an app with this filename. A tie between casks broken by heuristic,
+// or a pkg cask matched only because its uninstall stanza quits this bundle
+// id (Elgato Camera Hub quits DisplayLink Manager, which it bundles), is good
+// enough to report a version, not to choose what gets installed.
+func caskLookup(c *cask, note, installed string) *Lookup {
 	version := c.Version
 	if i := strings.Index(version, ","); i > 0 {
 		version = version[:i]
 	}
 	l := &Lookup{Source: "homebrew-cask", URL: c.URL, Note: "cask " + c.Token + note}
+	if note == "" {
+		l.Package = c.Token
+	}
 	if version == "latest" || version == "" {
 		l.Comparison = "unknown"
 		l.Note += "; cask is unversioned"
-		return l, c, nil
+		return l
 	}
 	l.Version = version
 	l.Comparison = comparison(installed, version)
-	return l, c, nil
+	return l
 }
 
 // match prefers an app filename hit, using the bundle identifier to break

@@ -60,6 +60,7 @@ type LookupVerdict struct {
 	Comparison string `json:"comparison"`
 	URL        string `json:"url,omitempty"`
 	Note       string `json:"note,omitempty"`
+	Package    string `json:"package,omitempty"` // Homebrew cask token when exactly one cask matched
 }
 
 // lookupPriority orders sources by how directly they speak for the vendor.
@@ -132,6 +133,9 @@ func ApplyLookups(r *Result, verdicts map[string][]LookupVerdict) {
 			e.Available = newer.Version
 			e.UpdateSource = newer.Source
 			e.Sources = append(e.Sources, "lookup")
+			if newer.Package != "" {
+				e.Package = newer.Package
+			}
 		case same != nil:
 			e.Status = "NOT FLAGGED"
 			e.UpdateSource = same.Source

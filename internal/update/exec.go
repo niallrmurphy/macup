@@ -22,6 +22,7 @@ import (
 type Options struct {
 	FetchOnly       bool
 	AllowUnverified bool
+	Adopt           bool // run brew-adopt actions; without it they are skipped
 	Out, Err        io.Writer
 }
 
@@ -33,12 +34,14 @@ type Outcome struct {
 }
 
 // Execute runs the plan and returns one outcome per action. Homebrew
-// actions are batched into a single upgrade per kind so dependencies are
-// resolved once; everything else runs one at a time. Every executed or
-// failed action is appended to the update log.
+// actions that share a command are batched into a single invocation so
+// dependencies are resolved once; everything else runs one at a time.
+// Adoptions replace an app Homebrew does not own, so they run only when
+// opts.Adopt is set. Every executed or failed action is appended to the
+// update log.
 func Execute(ctx context.Context, plan []Action, opts Options) []Outcome {
 	var out []Outcome
-	var formulae, casks []Action
+	var batches []*brewBatch
 	for _, a := range plan {
 		switch {
 		case a.Route == RouteSparkle:
@@ -46,10 +49,13 @@ func Execute(ctx context.Context, plan []Action, opts Options) []Outcome {
 			out = append(out, record(a, res, err, opts))
 		case opts.FetchOnly:
 			out = append(out, Outcome{Action: a, Result: "skipped"})
-		case a.Route == RouteBrew && len(a.Command) >= 4 && a.Command[2] == "--formula":
-			formulae = append(formulae, a)
-		case a.Route == RouteBrew && len(a.Command) >= 4 && a.Command[2] == "--cask":
-			casks = append(casks, a)
+		case a.Route == RouteAdopt && !opts.Adopt:
+			fmt.Fprintf(opts.Out, "skip   %s: %s (re-run with --adopt to let Homebrew replace it)\n", a.Name, strings.Join(a.Command, " "))
+			out = append(out, Outcome{Action: a, Result: "skipped"})
+		case (a.Route == RouteBrew || a.Route == RouteAdopt) && len(a.Command) < 2:
+			out = append(out, record(a, "failed", errors.New("no command planned"), opts))
+		case a.Route == RouteBrew, a.Route == RouteAdopt:
+			batches = addToBatch(batches, a)
 		case a.Route == RouteMas, a.Route == RouteMAU:
 			err := delegate(ctx, a.Name, a.Command, opts)
 			out = append(out, record(a, "ran", err, opts))
@@ -58,22 +64,44 @@ func Execute(ctx context.Context, plan []Action, opts Options) []Outcome {
 			out = append(out, Outcome{Action: a, Result: "skipped"})
 		}
 	}
-	for _, batch := range [][]Action{formulae, casks} {
-		if len(batch) == 0 {
-			continue
-		}
-		cmd := append([]string{}, batch[0].Command[:3]...)
-		var names []string
-		for _, a := range batch {
-			names = append(names, a.Command[3])
-		}
-		cmd = append(cmd, names...)
-		err := delegate(ctx, fmt.Sprintf("%d Homebrew %s", len(batch), strings.TrimPrefix(batch[0].Command[2], "--")+"e"), cmd, opts)
-		for _, a := range batch {
+	for _, b := range batches {
+		cmd := append(append([]string{}, b.prefix...), b.names...)
+		err := delegate(ctx, b.label(), cmd, opts)
+		for _, a := range b.actions {
 			out = append(out, record(a, "ran", err, opts))
 		}
 	}
 	return out
+}
+
+// brewBatch groups Homebrew actions whose command differs only in its final
+// argument, the formula or cask name, so one `brew` call covers them all.
+type brewBatch struct {
+	prefix  []string
+	names   []string
+	actions []Action
+}
+
+func addToBatch(batches []*brewBatch, a Action) []*brewBatch {
+	prefix, name := a.Command[:len(a.Command)-1], a.Command[len(a.Command)-1]
+	for _, b := range batches {
+		if strings.Join(b.prefix, " ") == strings.Join(prefix, " ") {
+			b.names, b.actions = append(b.names, name), append(b.actions, a)
+			return batches
+		}
+	}
+	return append(batches, &brewBatch{prefix: prefix, names: []string{name}, actions: []Action{a}})
+}
+
+func (b *brewBatch) label() string {
+	kind := "formulae"
+	switch {
+	case b.actions[0].Route == RouteAdopt:
+		kind = "cask adoptions"
+	case has(b.prefix, "--cask"):
+		kind = "casks"
+	}
+	return fmt.Sprintf("%d Homebrew %s", len(b.names), kind)
 }
 
 func record(a Action, result string, err error, opts Options) Outcome {

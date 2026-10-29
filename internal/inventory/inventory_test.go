@@ -148,13 +148,13 @@ func TestApplyLookupsPriority(t *testing.T) {
 	r.Entries[2].Status = "OUTDATED"
 	r.Entries[3].Status, r.Entries[3].UpdateSource = "MANAGED", "parent"
 	ApplyLookups(&r, map[string][]LookupVerdict{
-		identityPath("/Applications/A.app"): {{Source: "github-releases", Version: "9.9", Comparison: "newer"}, {Source: "homebrew-cask", Version: "2.0", Comparison: "newer"}, {Source: "itunes", Version: "1.0", Comparison: "same"}},
+		identityPath("/Applications/A.app"): {{Source: "github-releases", Version: "9.9", Comparison: "newer"}, {Source: "homebrew-cask", Version: "2.0", Comparison: "newer", Package: "a-cask"}, {Source: "itunes", Version: "1.0", Comparison: "same"}},
 		identityPath("/Applications/B.app"): {{Source: "homebrew-cask", Version: "3.0", Comparison: "unknown"}},
 		identityPath("/Applications/C.app"): {{Source: "homebrew-cask", Version: "5.0", Comparison: "newer"}},
 		identityPath("/Applications/D.app"): {{Source: "homebrew-cask", Version: "5.0", Comparison: "newer"}},
 	})
-	if e := r.Entries[0]; e.Status != "OUTDATED" || e.Available != "2.0" || e.UpdateSource != "homebrew-cask" || len(e.Sources) != 2 {
-		t.Fatalf("catalogue should outrank a derived feed: %+v", e)
+	if e := r.Entries[0]; e.Status != "OUTDATED" || e.Available != "2.0" || e.UpdateSource != "homebrew-cask" || len(e.Sources) != 2 || e.Package != "a-cask" {
+		t.Fatalf("catalogue should outrank a derived feed and carry its cask token: %+v", e)
 	}
 	if e := r.Entries[1]; e.Status != "NO SOURCE" || !strings.Contains(e.Detail, "homebrew-cask lists 3.0") {
 		t.Fatalf("%+v", e)
