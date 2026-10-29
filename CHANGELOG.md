@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.1.0 (2026-10-29)
+
+- `macup update` gains a `brew-adopt` route for an app installed outside
+  Homebrew when exactly one cask ships an app with its filename. The plan
+  shows `brew install --cask --force TOKEN`, with `--appdir` when the app
+  lives outside `/Applications` so it is replaced in place, and
+  `--yes --adopt` runs it; Homebrew then owns future upgrades. Without
+  `--adopt` the action is skipped with a hint, and the summary says so.
+- Homebrew's own `--adopt` flag, which the README used to suggest, is not
+  used: it accepts only a bundle whose version already matches the cask's,
+  which an outdated app never does.
+- A cask chosen by tie-break among several that ship the same app name, or
+  a pkg cask matched only because its uninstall stanza quits this bundle
+  identifier (Elgato Camera Hub quits the DisplayLink Manager it bundles),
+  still reports a version but is never offered for adoption.
+- Catalogue-only entries get clearer manual advice: an App Store listing
+  says so, and a cask hit without a clean match says why.
+- Homebrew actions are batched by shared command rather than by a fixed
+  argument position.
+
 ## 1.0.2 (2026-10-28)
 
 - Sparkle enclosures given as relative URLs (Tailscale's appcast lists
