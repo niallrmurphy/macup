@@ -40,8 +40,8 @@ type Outcome struct {
 // softwareupdate call; everything else runs one at a time.
 // Adoptions replace an app Homebrew does not own, so they run only when
 // opts.Adopt is set. Apple updates that need a restart run only when
-// opts.AppleRestart is set, and macup never restarts the machine itself. Every executed or failed action is appended to the
-// update log.
+// opts.AppleRestart is set, and macup never restarts the machine itself.
+// Every executed or failed action is appended to the update log.
 func Execute(ctx context.Context, plan []Action, opts Options) []Outcome {
 	var out []Outcome
 	var batches []*brewBatch
