@@ -37,6 +37,7 @@ type Result struct {
 	Sparkle      *SparkleResult   `json:"sparkle,omitempty"`
 	Microsoft    *MicrosoftResult `json:"microsoft,omitempty"`
 	Adobe        *AdobeResult     `json:"adobe,omitempty"`
+	Apple        *AppleResult     `json:"apple,omitempty"`
 }
 
 // DefaultRoots covers common system-wide and per-user app locations.

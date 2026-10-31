@@ -15,7 +15,7 @@ func Run(w io.Writer, roots []string) error {
 	if runtime.GOOS != "darwin" {
 		fmt.Fprintln(w, "note: macup targets macOS; fixture scans can run on other systems")
 	}
-	for _, tool := range []string{"plutil", "brew", "mas"} {
+	for _, tool := range []string{"plutil", "brew", "mas", "softwareupdate"} {
 		path, err := exec.LookPath(tool)
 		if err != nil {
 			fmt.Fprintf(w, "%s: not found (optional except plutil for binary plists)\n", tool)

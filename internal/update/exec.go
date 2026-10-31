@@ -23,6 +23,7 @@ type Options struct {
 	FetchOnly       bool
 	AllowUnverified bool
 	Adopt           bool // run brew-adopt actions; without it they are skipped
+	AppleRestart    bool // run Apple updates that need a restart; without it they are skipped
 	Out, Err        io.Writer
 }
 
@@ -35,9 +36,11 @@ type Outcome struct {
 
 // Execute runs the plan and returns one outcome per action. Homebrew
 // actions that share a command are batched into a single invocation so
-// dependencies are resolved once; everything else runs one at a time.
+// dependencies are resolved once, and Apple updates share one sudo
+// softwareupdate call; everything else runs one at a time.
 // Adoptions replace an app Homebrew does not own, so they run only when
-// opts.Adopt is set. Every executed or failed action is appended to the
+// opts.Adopt is set. Apple updates that need a restart run only when
+// opts.AppleRestart is set, and macup never restarts the machine itself. Every executed or failed action is appended to the
 // update log.
 func Execute(ctx context.Context, plan []Action, opts Options) []Outcome {
 	var out []Outcome
@@ -52,9 +55,14 @@ func Execute(ctx context.Context, plan []Action, opts Options) []Outcome {
 		case a.Route == RouteAdopt && !opts.Adopt:
 			fmt.Fprintf(opts.Out, "skip   %s: %s (re-run with --adopt to let Homebrew replace it)\n", a.Name, strings.Join(a.Command, " "))
 			out = append(out, Outcome{Action: a, Result: "skipped"})
+		case a.Route == RouteApple && a.Restart && !opts.AppleRestart:
+			fmt.Fprintf(opts.Out, "skip   %s: %s (needs a restart; re-run with --apple-restart to install it)\n", a.Name, strings.Join(a.Command, " "))
+			out = append(out, Outcome{Action: a, Result: "skipped"})
+		case a.Route == RouteApple && len(a.Command) < 4:
+			out = append(out, record(a, "failed", errors.New("no command planned"), opts))
 		case (a.Route == RouteBrew || a.Route == RouteAdopt) && len(a.Command) < 2:
 			out = append(out, record(a, "failed", errors.New("no command planned"), opts))
-		case a.Route == RouteBrew, a.Route == RouteAdopt:
+		case a.Route == RouteBrew, a.Route == RouteAdopt, a.Route == RouteApple:
 			batches = addToBatch(batches, a)
 		case a.Route == RouteMas, a.Route == RouteMAU:
 			err := delegate(ctx, a.Name, a.Command, opts)
@@ -74,8 +82,8 @@ func Execute(ctx context.Context, plan []Action, opts Options) []Outcome {
 	return out
 }
 
-// brewBatch groups Homebrew actions whose command differs only in its final
-// argument, the formula or cask name, so one `brew` call covers them all.
+// brewBatch groups actions whose command differs only in its final argument
+// (a formula, cask or softwareupdate label), so one call covers them all.
 type brewBatch struct {
 	prefix  []string
 	names   []string
@@ -96,6 +104,8 @@ func addToBatch(batches []*brewBatch, a Action) []*brewBatch {
 func (b *brewBatch) label() string {
 	kind := "formulae"
 	switch {
+	case b.actions[0].Route == RouteApple:
+		return fmt.Sprintf("%d Apple updates", len(b.names))
 	case b.actions[0].Route == RouteAdopt:
 		kind = "cask adoptions"
 	case has(b.prefix, "--cask"):
