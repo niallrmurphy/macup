@@ -21,6 +21,7 @@ const (
 	RouteBrew    = "brew"          // brew upgrade
 	RouteMas     = "mas"           // mas upgrade
 	RouteMAU     = "msupdate"      // Microsoft AutoUpdate --install
+	RouteApple   = "Apple"         // sudo softwareupdate --install: macOS, Command Line Tools, Safari
 	RouteSparkle = "sparkle-fetch" // download enclosure, verify EdDSA, open
 	RouteAdopt   = "brew-adopt"    // brew install --cask --force: replace an app Homebrew does not own with the cask's build (needs --adopt)
 	RouteAdvice  = "manual"        // nothing to run; Reason says what to do
@@ -38,6 +39,7 @@ type Action struct {
 	Length    int64    `json:"length,omitempty"`
 	Path      string   `json:"path,omitempty"`
 	Reason    string   `json:"reason,omitempty"`
+	Restart   bool     `json:"restart,omitempty"` // Apple: installing needs a restart; runs only with --apple-restart
 }
 
 var masID = regexp.MustCompile(`\bid:(\d+)`)
@@ -60,6 +62,12 @@ func Plan(r inventory.Result) []Action {
 			sparkle[c.Path] = c
 		}
 	}
+	apple := map[string]inventory.AppleUpdate{}
+	if r.Apple != nil {
+		for _, u := range r.Apple.Updates {
+			apple["label:"+u.Label] = u
+		}
+	}
 	var plan []Action
 	for _, e := range r.Entries {
 		if !inventory.NeedsUpdate(e.Status) {
@@ -80,6 +88,13 @@ func Plan(r inventory.Result) []Action {
 				a.Route, a.Command = RouteMas, []string{"mas", "upgrade", m[1]}
 			} else {
 				a.Route, a.Reason = RouteAdvice, "App Store app without an id; update from the App Store"
+			}
+		case e.UpdateSource == "softwareupdate":
+			if u, ok := apple[e.Detail]; ok && u.Label != "" {
+				a.Route, a.Restart = RouteApple, u.Restart
+				a.Command = []string{"sudo", "softwareupdate", "--install", u.Label}
+			} else {
+				a.Route, a.Reason = RouteAdvice, "Apple update without a label; install it from System Settings > General > Software Update"
 			}
 		case e.UpdateSource == "microsoft-autoupdate":
 			if id := mauIDs[strings.ToLower(e.Name)]; id != "" {
@@ -146,7 +161,7 @@ func adoptCommand(token, path string) []string {
 }
 
 func routeRank(r string) int {
-	for i, x := range []string{RouteBrew, RouteMas, RouteMAU, RouteSparkle, RouteAdopt, RouteAdvice} {
+	for i, x := range []string{RouteBrew, RouteMas, RouteMAU, RouteApple, RouteSparkle, RouteAdopt, RouteAdvice} {
 		if x == r {
 			return i
 		}
@@ -189,6 +204,11 @@ func PrintPlan(w io.Writer, plan []Action) error {
 		switch a.Route {
 		case RouteBrew, RouteMas, RouteMAU:
 			action = strings.Join(a.Command, " ")
+		case RouteApple:
+			action = strings.Join(a.Command, " ") + " [needs sudo]"
+			if a.Restart {
+				action += " [needs a restart; runs only with --apple-restart]"
+			}
 		case RouteAdopt:
 			action = strings.Join(a.Command, " ") + " [replaces the app; runs only with --adopt]"
 		case RouteSparkle:
@@ -204,7 +224,7 @@ func PrintPlan(w io.Writer, plan []Action) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(w, "\n%d actions: %d brew, %d mas, %d msupdate, %d sparkle downloads, %d cask adoptions, %d manual\n", len(plan), counts[RouteBrew], counts[RouteMas], counts[RouteMAU], counts[RouteSparkle], counts[RouteAdopt], counts[RouteAdvice])
+	_, err := fmt.Fprintf(w, "\n%d actions: %d brew, %d mas, %d msupdate, %d Apple, %d sparkle downloads, %d cask adoptions, %d manual\n", len(plan), counts[RouteBrew], counts[RouteMas], counts[RouteMAU], counts[RouteApple], counts[RouteSparkle], counts[RouteAdopt], counts[RouteAdvice])
 	return err
 }
 

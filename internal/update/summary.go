@@ -45,6 +45,9 @@ func Summarise(outcomes []Outcome, after inventory.Result, brewBefore, brewAfter
 			if o.Action.Route == RouteAdopt {
 				name += " (re-run with --adopt)"
 			}
+			if o.Action.Route == RouteApple && o.Action.Restart {
+				name += " (needs a restart; re-run with --apple-restart)"
+			}
 			s.Skipped = append(s.Skipped, name)
 		case o.Result == "staged" || o.Result == "opened":
 			if still {

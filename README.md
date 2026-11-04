@@ -279,6 +279,7 @@ or OpenSSL. `--no-rescan` skips that step.
 | `brew` | `brew upgrade --formula NAME` or `--cask TOKEN` | Homebrew |
 | `mas` | `mas upgrade ID` | the App Store |
 | `msupdate` | Microsoft AutoUpdate's `msupdate --install --apps ID` | Microsoft AutoUpdate |
+| `Apple` | `sudo softwareupdate --install LABEL`, one call for all labels; updates that need a restart only with `--apple-restart` | Apple's `softwareupdate` |
 | `sparkle-fetch` | downloads the appcast enclosure, verifies it, opens it | you, from the opened disk image or archive |
 | `brew-adopt` | `brew install --cask --force TOKEN`, only with `--adopt` | Homebrew, which then owns future upgrades |
 | `manual` | nothing; the ACTION column says where to go | you |
@@ -418,6 +419,25 @@ attribute values, feed contents, download URLs, or application binaries.
 The sample directory is created with mode `0700` and files with `0600`.
 Inspect samples before sharing: element/attribute names themselves may disclose
 application-specific metadata. Network checks remain HTTPS-only and read-only.
+
+## Apple software updates
+
+`macup scan --providers=apple` runs `/usr/sbin/softwareupdate --list`, which needs
+no privileges, and reports each pending macOS update, Xcode Command Line Tools
+update, Safari update and similar as an `OUTDATED` entry whose source is
+`softwareupdate`. It contacts Apple, so `--offline` leaves it out, and its result is
+never cached because `macup update` rescans afterwards to see what is still
+pending.
+
+`macup update --yes` turns those entries into the `Apple` route:
+`sudo softwareupdate --install LABEL`. Labels are batched into one call, so
+`sudo` asks for your password once. Updates that need a restart, which is
+every macOS update, are planned but skipped unless you also pass
+`--apple-restart`; macup then installs them but never passes `--restart` to
+`softwareupdate` or reboots the machine, so restart when you are ready. On
+Apple silicon, `softwareupdate` may still ask for a volume owner's credentials
+for a macOS update. If the CLI cannot do it, use System Settings > General >
+Software Update.
 
 ## Microsoft AutoUpdate (read-only)
 

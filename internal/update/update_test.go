@@ -76,7 +76,7 @@ func TestPlanRoutes(t *testing.T) {
 		t.Fatalf("%+v", f)
 	}
 	var b bytes.Buffer
-	if err := PrintPlan(&b, plan); err != nil || !strings.Contains(b.String(), "10 actions: 2 brew, 1 mas, 1 msupdate, 1 sparkle downloads, 2 cask adoptions, 3 manual") {
+	if err := PrintPlan(&b, plan); err != nil || !strings.Contains(b.String(), "10 actions: 2 brew, 1 mas, 1 msupdate, 0 Apple, 1 sparkle downloads, 2 cask adoptions, 3 manual") {
 		t.Fatal(b.String(), err)
 	}
 	if !strings.Contains(b.String(), "brew install --cask --force calibre [replaces the app; runs only with --adopt]") {
@@ -212,5 +212,75 @@ func TestExecuteBatchesHomebrew(t *testing.T) {
 func TestNamesApp(t *testing.T) {
 	if !namesApp("Mirage%20Host-1.3.1.dmg", "Mirage Host") || namesApp("Mirage%20Beacon-1.3.1-1020181.dmg", "Mirage Host") || !namesApp("iTerm2-3_7_6.zip", "iTerm2") {
 		t.Fatal("namesApp")
+	}
+}
+
+func TestPlanAppleRoute(t *testing.T) {
+	r := inventory.Result{
+		Entries: []inventory.Entry{
+			{Name: "Command Line Tools for Xcode", Status: "OUTDATED", Available: "16.2", Sources: []string{"softwareupdate"}, UpdateSource: "softwareupdate", Detail: "label:Command Line Tools for Xcode-16.2"},
+			{Name: "macOS Sequoia 15.2", Status: "OUTDATED", Available: "15.2", Sources: []string{"softwareupdate"}, UpdateSource: "softwareupdate", Detail: "label:macOS Sequoia 15.2-24C101"},
+			{Name: "Mystery", Status: "OUTDATED", Sources: []string{"softwareupdate"}, UpdateSource: "softwareupdate", Detail: "label:gone"},
+		},
+		Apple: &inventory.AppleResult{Updates: []inventory.AppleUpdate{
+			{Label: "Command Line Tools for Xcode-16.2", Title: "Command Line Tools for Xcode"},
+			{Label: "macOS Sequoia 15.2-24C101", Title: "macOS Sequoia 15.2", Restart: true},
+		}},
+	}
+	plan := Plan(r)
+	byName := map[string]Action{}
+	for _, a := range plan {
+		byName[a.Name] = a
+	}
+	clt := byName["Command Line Tools for Xcode"]
+	if clt.Route != RouteApple || clt.Restart || strings.Join(clt.Command, "|") != "sudo|softwareupdate|--install|Command Line Tools for Xcode-16.2" {
+		t.Fatalf("%+v", clt)
+	}
+	if a := byName["macOS Sequoia 15.2"]; a.Route != RouteApple || !a.Restart {
+		t.Fatalf("%+v", a)
+	}
+	if a := byName["Mystery"]; a.Route != RouteAdvice || len(a.Command) != 0 {
+		t.Fatalf("%+v", a)
+	}
+	if routeRank(RouteApple) <= routeRank(RouteMAU) || routeRank(RouteApple) >= routeRank(RouteSparkle) {
+		t.Fatal("Apple should rank between msupdate and sparkle-fetch")
+	}
+	var b bytes.Buffer
+	if err := PrintPlan(&b, plan); err != nil || !strings.Contains(b.String(), "[needs a restart; runs only with --apple-restart]") || !strings.Contains(b.String(), "2 Apple") {
+		t.Fatal(b.String(), err)
+	}
+}
+
+func TestExecuteAppleNeedsRestartFlagAndBatches(t *testing.T) {
+	var out, errb bytes.Buffer
+	plan := []Action{
+		{Name: "CLT", Route: RouteApple, Command: []string{"sudo-does-not-exist", "softwareupdate", "--install", "CLT-16.2"}},
+		{Name: "Safari", Route: RouteApple, Command: []string{"sudo-does-not-exist", "softwareupdate", "--install", "Safari-18.2"}},
+		{Name: "macOS", Route: RouteApple, Restart: true, Command: []string{"sudo-does-not-exist", "softwareupdate", "--install", "macOS-15.2"}},
+		{Name: "empty", Route: RouteApple},
+	}
+	outcomes := Execute(context.Background(), plan, Options{Out: &out, Err: &errb})
+	res := map[string]string{}
+	for _, o := range outcomes {
+		res[o.Action.Name] = o.Result
+	}
+	if res["macOS"] != "skipped" || res["CLT"] != "failed" || res["Safari"] != "failed" || res["empty"] != "failed" {
+		t.Fatalf("%v\n%s", res, out.String())
+	}
+	if !strings.Contains(out.String(), "--install CLT-16.2 Safari-18.2") || !strings.Contains(out.String(), "2 Apple updates") || strings.Contains(out.String(), "run    1 Apple") {
+		t.Fatal(out.String())
+	}
+	if !strings.Contains(out.String(), "--apple-restart") {
+		t.Fatal(out.String())
+	}
+	out.Reset()
+	outcomes = Execute(context.Background(), plan[:3], Options{Out: &out, Err: &errb, AppleRestart: true})
+	for _, o := range outcomes {
+		if o.Result == "skipped" {
+			t.Fatalf("--apple-restart should run the restart update too: %+v", o)
+		}
+	}
+	if !strings.Contains(out.String(), "--install CLT-16.2 Safari-18.2 macOS-15.2") {
+		t.Fatal(out.String())
 	}
 }

@@ -8,6 +8,12 @@
   switching who installs the app (a sandboxed App Store build, or Homebrew
   taking over). The plan still lists these entries; an App Store hit gets
   the listing URL in its reason and is never installed automatically.
+- New `apple` update provider: `macup scan` runs `softwareupdate --list` and
+  reports pending macOS, Command Line Tools and Safari updates. It is part of
+  `--providers=all`, is skipped by `--offline`, and is not cached.
+- `macup update` gains an `Apple` route (`sudo softwareupdate --install
+  LABEL`, batched into one call). Updates that need a restart run only with
+  `--yes --apple-restart`, and macup never restarts the machine.
 
 ## 1.1.0 (2026-10-29)
 
