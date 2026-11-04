@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- A newer version found only in a catalogue the copy was not installed
+  from, the App Store or the Homebrew cask index, is now `OTHER CHANNEL`
+  rather than `OUTDATED`: the version exists, but reaching it means
+  switching who installs the app (a sandboxed App Store build, or Homebrew
+  taking over). The plan still lists these entries; an App Store hit gets
+  the listing URL in its reason and is never installed automatically.
+
 ## 1.1.0 (2026-10-29)
 
 - `macup update` gains a `brew-adopt` route for an app installed outside

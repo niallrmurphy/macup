@@ -143,18 +143,29 @@ func TestSparkleFeedFinderFallback(t *testing.T) {
 }
 
 func TestApplyLookupsPriority(t *testing.T) {
-	r := Result{Applications: []Application{{Name: "A", Path: "/Applications/A.app"}, {Name: "B", Path: "/Applications/B.app"}, {Name: "C", Path: "/Applications/C.app"}, {Name: "D", Path: "/Applications/D.app"}}}
+	r := Result{Applications: []Application{{Name: "A", Path: "/Applications/A.app"}, {Name: "B", Path: "/Applications/B.app"}, {Name: "C", Path: "/Applications/C.app"}, {Name: "D", Path: "/Applications/D.app"}, {Name: "E", Path: "/Applications/E.app"}, {Name: "F", Path: "/Applications/F.app"}}}
 	Reconcile(&r)
 	r.Entries[2].Status = "OUTDATED"
 	r.Entries[3].Status, r.Entries[3].UpdateSource = "MANAGED", "parent"
 	ApplyLookups(&r, map[string][]LookupVerdict{
 		identityPath("/Applications/A.app"): {{Source: "github-releases", Version: "9.9", Comparison: "newer"}, {Source: "homebrew-cask", Version: "2.0", Comparison: "newer", Package: "a-cask"}, {Source: "itunes", Version: "1.0", Comparison: "same"}},
 		identityPath("/Applications/B.app"): {{Source: "homebrew-cask", Version: "3.0", Comparison: "unknown"}},
+		identityPath("/Applications/E.app"): {{Source: "itunes", Version: "1.0.3", Comparison: "newer", URL: "https://apps.apple.com/us/app/yazmin/id1549608914?mt=12&uo=4"}},
+		identityPath("/Applications/F.app"): {{Source: "github-releases", Version: "2.0", Comparison: "newer"}},
 		identityPath("/Applications/C.app"): {{Source: "homebrew-cask", Version: "5.0", Comparison: "newer"}},
 		identityPath("/Applications/D.app"): {{Source: "homebrew-cask", Version: "5.0", Comparison: "newer"}},
 	})
-	if e := r.Entries[0]; e.Status != "OUTDATED" || e.Available != "2.0" || e.UpdateSource != "homebrew-cask" || len(e.Sources) != 2 || e.Package != "a-cask" {
-		t.Fatalf("catalogue should outrank a derived feed and carry its cask token: %+v", e)
+	if e := r.Entries[0]; e.Status != "OTHER CHANNEL" || e.Available != "2.0" || e.UpdateSource != "homebrew-cask" || len(e.Sources) != 2 || e.Package != "a-cask" || !strings.Contains(e.Detail, "did not come from Homebrew") {
+		t.Fatalf("catalogue should outrank a derived feed, carry its cask token, and be another channel: %+v", e)
+	}
+	if e := r.Entries[4]; e.Status != "OTHER CHANNEL" || e.Available != "1.0.3" || e.Detail != "id:1549608914 in the App Store; this copy did not come from there" {
+		t.Fatalf("App Store hit on a non-App-Store copy: %+v", e)
+	}
+	if e := r.Entries[5]; e.Status != "OUTDATED" || e.Available != "2.0" {
+		t.Fatalf("a vendor feed is the copy's own channel: %+v", e)
+	}
+	if !NeedsUpdate("OUTDATED") || !NeedsUpdate("OTHER CHANNEL") || NeedsUpdate("NOT FLAGGED") {
+		t.Fatal("NeedsUpdate")
 	}
 	if e := r.Entries[1]; e.Status != "NO SOURCE" || !strings.Contains(e.Detail, "homebrew-cask lists 3.0") {
 		t.Fatalf("%+v", e)

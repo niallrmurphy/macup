@@ -25,7 +25,7 @@ type Summary struct {
 func Summarise(outcomes []Outcome, after inventory.Result, brewBefore, brewAfter map[string]string) Summary {
 	outdated := map[string]bool{}
 	for _, e := range after.Entries {
-		if e.Status == "OUTDATED" {
+		if inventory.NeedsUpdate(e.Status) {
 			outdated[strings.ToLower(e.Name)] = true
 		}
 	}
@@ -59,7 +59,7 @@ func Summarise(outcomes []Outcome, after inventory.Result, brewBefore, brewAfter
 		}
 	}
 	for _, e := range after.Entries {
-		if e.Status == "OUTDATED" && !planned[strings.ToLower(e.Name)] {
+		if inventory.NeedsUpdate(e.Status) && !planned[strings.ToLower(e.Name)] {
 			s.NewlyOut = append(s.NewlyOut, e.Name+" "+e.Available)
 		}
 	}

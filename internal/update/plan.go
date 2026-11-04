@@ -44,7 +44,9 @@ var masID = regexp.MustCompile(`\bid:(\d+)`)
 
 const mauPath = "/Library/Application Support/Microsoft/MAU2.0/Microsoft AutoUpdate.app/Contents/MacOS/msupdate"
 
-// Plan maps every OUTDATED entry to the most trustworthy route available.
+// Plan maps every entry with a known newer version (OUTDATED, or OTHER
+// CHANNEL for a version reachable only by switching provider) to the most
+// trustworthy route available.
 func Plan(r inventory.Result) []Action {
 	mauIDs := map[string]string{}
 	if r.Microsoft != nil {
@@ -60,7 +62,7 @@ func Plan(r inventory.Result) []Action {
 	}
 	var plan []Action
 	for _, e := range r.Entries {
-		if e.Status != "OUTDATED" {
+		if !inventory.NeedsUpdate(e.Status) {
 			continue
 		}
 		a := Action{Name: e.Name, Installed: e.Installed, Available: e.Available, Path: e.Path}
@@ -109,7 +111,11 @@ func Plan(r inventory.Result) []Action {
 				a.Reason = "not installed through Homebrew; replaces the app with the cask's build and hands future upgrades to brew"
 			}
 		case e.UpdateSource == "itunes":
-			a.Route, a.Reason = RouteAdvice, "newer version in the App Store catalogue; install it from the App Store or the vendor's channel"
+			a.Route, a.Reason = RouteAdvice, "available only through the App Store as far as macup can see; this copy is not an App Store install, so updating means installing the sandboxed App Store build and letting the App Store own future updates"
+			if m := masID.FindStringSubmatch(e.Detail); m != nil {
+				a.URL = "https://apps.apple.com/app/id" + m[1]
+				a.Reason += ": " + a.URL
+			}
 		default:
 			a.Route, a.Reason = RouteAdvice, "newer version reported by "+e.UpdateSource+"; no automated route"
 		}

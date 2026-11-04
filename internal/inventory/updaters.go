@@ -1,6 +1,7 @@
 package inventory
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -84,7 +85,7 @@ func LookupEligible(e Entry) bool {
 		return false
 	}
 	switch e.Status {
-	case "OUTDATED", "CURRENT", "NOT FLAGGED", "UPGRADE AVAILABLE":
+	case "OUTDATED", "OTHER CHANNEL", "CURRENT", "NOT FLAGGED", "UPGRADE AVAILABLE":
 		return false
 	case "MANAGED":
 		return e.UpdateSource != "parent" && e.UpdateSource != "browser"
@@ -92,9 +93,21 @@ func LookupEligible(e Entry) bool {
 	return true
 }
 
+// NeedsUpdate reports whether a status means a newer version is known:
+// OUTDATED through the copy's own channel, or OTHER CHANNEL through a
+// provider the copy was not installed with.
+func NeedsUpdate(status string) bool {
+	return status == "OUTDATED" || status == "OTHER CHANNEL"
+}
+
+var appStoreID = regexp.MustCompile(`/id(\d+)`)
+
 // ApplyLookups folds keyed lookup results into entries that no provider
-// evaluated. A source reporting a newer version makes the entry OUTDATED;
-// failing that, a source reporting the same version makes it NOT FLAGGED;
+// evaluated. A source reporting a newer version makes the entry OUTDATED,
+// unless that source is a catalogue the copy was not installed from (the
+// App Store, the Homebrew cask index), in which case the version cannot be
+// reached without switching provider and the entry is OTHER CHANNEL.
+// Failing that, a source reporting the same version makes it NOT FLAGGED;
 // anything else is recorded in Detail without changing the status.
 func ApplyLookups(r *Result, verdicts map[string][]LookupVerdict) {
 	for i := range r.Entries {
@@ -135,6 +148,19 @@ func ApplyLookups(r *Result, verdicts map[string][]LookupVerdict) {
 			e.Sources = append(e.Sources, "lookup")
 			if newer.Package != "" {
 				e.Package = newer.Package
+			}
+			// Only entries with no provider reach here, so an App Store or
+			// cask hit is by construction a channel this copy does not use.
+			switch newer.Source {
+			case "itunes":
+				e.Status = "OTHER CHANNEL"
+				e.Detail = "in the App Store; this copy did not come from there"
+				if m := appStoreID.FindStringSubmatch(newer.URL); m != nil {
+					e.Detail = "id:" + m[1] + " " + e.Detail
+				}
+			case "homebrew-cask":
+				e.Status = "OTHER CHANNEL"
+				e.Detail = "in the Homebrew cask index; this copy did not come from Homebrew"
 			}
 		case same != nil:
 			e.Status = "NOT FLAGGED"

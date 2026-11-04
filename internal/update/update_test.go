@@ -22,10 +22,10 @@ func TestPlanRoutes(t *testing.T) {
 			{Name: "Microsoft Outlook", Status: "OUTDATED", Sources: []string{"apps", "microsoft"}, UpdateSource: "microsoft-autoupdate"},
 			{Name: "Arc", Status: "OUTDATED", Sources: []string{"apps", "sparkle"}, UpdateSource: "sparkle", Path: "/Applications/NotInstalled-Test.app"},
 			{Name: "Lightroom", Status: "OUTDATED", Sources: []string{"apps", "adobe"}, UpdateSource: "adobe-catalog"},
-			{Name: "calibre", Status: "OUTDATED", Sources: []string{"apps", "lookup"}, UpdateSource: "homebrew-cask", Package: "calibre", Path: "/Applications/calibre.app"},
-			{Name: "Zotero", Status: "OUTDATED", Sources: []string{"apps", "lookup"}, UpdateSource: "homebrew-cask", Package: "zotero", Path: "/Users/me/Applications/Zotero.app"},
+			{Name: "calibre", Status: "OTHER CHANNEL", Sources: []string{"apps", "lookup"}, UpdateSource: "homebrew-cask", Package: "calibre", Path: "/Applications/calibre.app"},
+			{Name: "Zotero", Status: "OTHER CHANNEL", Sources: []string{"apps", "lookup"}, UpdateSource: "homebrew-cask", Package: "zotero", Path: "/Users/me/Applications/Zotero.app"},
 			{Name: "Kobo", Status: "OUTDATED", Sources: []string{"apps", "lookup"}, UpdateSource: "homebrew-cask", Path: "/Applications/Kobo.app"},
-			{Name: "Magnet", Status: "OUTDATED", Sources: []string{"apps", "lookup"}, UpdateSource: "itunes", Path: "/Applications/Magnet.app"},
+			{Name: "Magnet", Status: "OTHER CHANNEL", Sources: []string{"apps", "lookup"}, UpdateSource: "itunes", Path: "/Applications/Magnet.app", Detail: "id:441258766 in the App Store; this copy did not come from there"},
 			{Name: "Fine", Status: "CURRENT", Sources: []string{"apps"}},
 		},
 		Microsoft: &inventory.MicrosoftResult{Updates: []inventory.MicrosoftUpdate{{ID: "OPIM2019", Name: "Microsoft Outlook", AvailableVersion: "16.114.2"}}},
@@ -66,8 +66,8 @@ func TestPlanRoutes(t *testing.T) {
 	if a := byName["Kobo"]; a.Route != RouteAdvice || len(a.Command) != 0 || !strings.Contains(a.Reason, "no single cask ships") {
 		t.Fatalf("no token, no adoption: %+v", a)
 	}
-	if a := byName["Magnet"]; a.Route != RouteAdvice || !strings.Contains(a.Reason, "App Store") {
-		t.Fatalf("%+v", a)
+	if a := byName["Magnet"]; a.Route != RouteAdvice || len(a.Command) != 0 || a.URL != "https://apps.apple.com/app/id441258766" || !strings.Contains(a.Reason, "sandboxed App Store build") || !strings.HasSuffix(a.Reason, a.URL) {
+		t.Fatalf("App Store switch is explained, never run: %+v", a)
 	}
 	if plan[0].Route != RouteBrew || plan[len(plan)-1].Route != RouteAdvice || routeRank(RouteAdopt) >= routeRank(RouteAdvice) || routeRank(RouteAdopt) <= routeRank(RouteSparkle) {
 		t.Fatalf("plan should be ordered by route, adoptions just before manual: %+v", plan)

@@ -139,6 +139,16 @@ less conclusive is noted in the column `DETAIL`. Catalogues outrank feeds derive
 a repository name found in a binary. Helpers and browser web-app shims are
 skipped. Obviously, this requires network connectivity.
 
+When the newer version was found only in a catalogue the copy was not
+installed from, the App Store (`itunes`) or the Homebrew cask index
+(`homebrew-cask`), the item is `OTHER CHANNEL` rather than `OUTDATED`: the
+version exists, but reaching it means switching who installs the app. For
+the App Store that is a different, sandboxed build, and future updates move
+to the App Store; `DETAIL` carries the listing's id. For a cask it is
+Homebrew taking over the install, which `macup update --adopt` can do. Only
+entries no provider evaluated reach the lookup, so a catalogue hit is by
+construction a channel the copy does not use.
+
 The Sparkle provider also uses feeds the bundle keeps outside `Info.plist`:
 set in user defaults, or compiled into a binary (VLC and Path Finder, for
 example). When a vendor publishes one feed per architecture, the one naming
@@ -255,7 +265,7 @@ untrusted, especially on untrusted machines.
 ```
 
 `macup update` runs the same scan as `macup scan`, then maps every
-`OUTDATED` entry to the most trustworthy route and prints the plan. Nothing
+`OUTDATED` and `OTHER CHANNEL` entry to the most trustworthy route and prints the plan. Nothing
 runs without `--yes`. With `--yes` it first refreshes Homebrew's metadata
 (`--skip-brew-update` to skip), so what gets installed is what the plan
 showed; Homebrew actions are batched into one upgrade per kind. Afterwards
@@ -305,7 +315,10 @@ download, and a running app is not quit first.
 Apps whose newer version came from the App Store catalogue (`itunes`), from
 a cask that could not be matched unambiguously, or from a derived feed get a
 `manual` route: macup has a version number but no vendor-signed artefact to
-fetch. Adobe and other vendor-managed apps are routed to their own updater.
+fetch. For an App Store listing the reason says that the copy is not an App
+Store install and gives the listing URL; switching to the sandboxed App
+Store build is deliberately left to you. Adobe and other vendor-managed apps
+are routed to their own updater.
 
 ## What leaves the machine
 

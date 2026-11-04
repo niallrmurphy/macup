@@ -111,7 +111,7 @@ func run(args []string) int {
 		quietFlag := fs.Bool("quiet", false, "suppress scan progress messages on stderr")
 		verboseFlag := fs.Bool("verbose", false, "print per-feed Sparkle progress on stderr")
 		allFlag := fs.Bool("all", false, "show entries already known to be current (table output only)")
-		statusFlag := fs.String("status", "", "show only these statuses, comma-separated, e.g. 'NO SOURCE' or 'OUTDATED,UPGRADE AVAILABLE' (table output only)")
+		statusFlag := fs.String("status", "", "show only these statuses, comma-separated, e.g. 'NO SOURCE' or 'OUTDATED,OTHER CHANNEL' (table output only)")
 		pathsFlag := fs.Bool("paths", false, "show bundle paths in the DETAIL column (table output only)")
 		lookupFlag := fs.Bool("lookup", false, "enable the lookup provider (on by default): public catalogues and release feeds for apps no other provider evaluated")
 		noLookupFlag := fs.Bool("no-lookup", false, "disable the lookup provider for this run")
@@ -554,17 +554,20 @@ func runLookups(ctx context.Context, result *inventory.Result, announce func(str
 	close(jobs)
 	wg.Wait()
 	inventory.ApplyLookups(result, verdicts)
-	var outdated, notFlagged int
+	var outdated, other, notFlagged int
 	for _, e := range result.Entries {
 		if len(e.Sources) == 2 && e.Sources[1] == "lookup" {
-			if e.Status == "OUTDATED" {
+			switch e.Status {
+			case "OUTDATED":
 				outdated++
-			} else {
+			case "OTHER CHANNEL":
+				other++
+			default:
 				notFlagged++
 			}
 		}
 	}
-	announce("Lookup: %d outdated, %d not flagged, %d without a comparable version", outdated, notFlagged, len(targets)+reused-outdated-notFlagged)
+	announce("Lookup: %d outdated, %d newer only through another channel, %d not flagged, %d without a comparable version", outdated, other, notFlagged, len(targets)+reused-outdated-other-notFlagged)
 }
 
 // Cache keys include everything whose change must invalidate the entry: the
