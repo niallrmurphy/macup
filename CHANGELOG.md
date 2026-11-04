@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- The Sparkle route reuses an enclosure staged by an earlier run when it
+  still passes the appcast size and EdDSA checks, so running `update` again
+  before installing does not download it a second time. A staged file that
+  no longer passes is removed and fetched afresh.
+- Staged downloads are retired once they cannot be reused: each staging
+  directory records its app and version, and the rescan after `--yes` or
+  `--fetch-only` removes it once that version is installed, the feed has
+  moved on, or the app is gone. Directories with no record, from older
+  releases, go after 30 days. The summary lists removals and space freed.
 - A newer version found only in a catalogue the copy was not installed
   from, the App Store or the Homebrew cask index, is now `OTHER CHANNEL`
   rather than `OUTDATED`: the version exists, but reaching it means

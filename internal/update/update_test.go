@@ -7,8 +7,11 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/niallrmurphy/macup/internal/inventory"
 )
@@ -282,5 +285,131 @@ func TestExecuteAppleNeedsRestartFlagAndBatches(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "--install CLT-16.2 Safari-18.2 macOS-15.2") {
 		t.Fatal(out.String())
+	}
+}
+
+func TestFetchSparkleReusesStagedEnclosure(t *testing.T) {
+	root := t.TempDir()
+	stagingDir = func() string { return root }
+	t.Cleanup(func() { stagingDir = StagingDir })
+
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("a disk image")
+	a := Action{
+		Name: "Thing", Available: "2.0", Route: RouteSparkle,
+		// Unreachable on purpose: a reuse must not touch the network.
+		URL:       "https://127.0.0.1:1/Thing.dmg",
+		Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(priv, data)),
+		PublicKey: base64.StdEncoding.EncodeToString(pub),
+		Length:    int64(len(data)),
+	}
+	dir := filepath.Join(root, "Thing-2.0")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	staged := filepath.Join(dir, "Thing.dmg")
+	if err := os.WriteFile(staged, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errb bytes.Buffer
+	outcomes := Execute(context.Background(), []Action{a}, Options{FetchOnly: true, Out: &out, Err: &errb})
+	if len(outcomes) != 1 || outcomes[0].Result != "staged" || outcomes[0].Err != nil {
+		t.Fatal(outcomes, out.String())
+	}
+	if !strings.Contains(out.String(), "reuse  Thing: "+staged) || strings.Contains(out.String(), "fetch  Thing") {
+		t.Fatalf("expected reuse without fetch, got:\n%s", out.String())
+	}
+	if raw, err := os.ReadFile(filepath.Join(dir, manifestName)); err != nil || !strings.Contains(string(raw), `"available":"2.0"`) {
+		t.Fatalf("manifest not written on reuse: %v %s", err, raw)
+	}
+
+	// A staged file that no longer verifies is discarded and fetched afresh;
+	// here the fetch fails because nothing listens, which is the point.
+	if err := os.WriteFile(staged, []byte("tampered"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.Length = int64(len("tampered"))
+	out.Reset()
+	outcomes = Execute(context.Background(), []Action{a}, Options{FetchOnly: true, Out: &out, Err: &errb})
+	if len(outcomes) != 1 || outcomes[0].Result != "failed" {
+		t.Fatal(outcomes, out.String())
+	}
+	if !strings.Contains(out.String(), "fetch  Thing") || strings.Contains(out.String(), "reuse  Thing") {
+		t.Fatalf("expected a fetch after discarding the stale file, got:\n%s", out.String())
+	}
+	if _, err := os.Stat(staged); !os.IsNotExist(err) {
+		t.Fatalf("stale staged file was not removed: %v", err)
+	}
+}
+
+func TestCleanStagingRetiresOnlyWhatCannotBeReused(t *testing.T) {
+	root := t.TempDir()
+	stagingDir = func() string { return root }
+	t.Cleanup(func() { stagingDir = StagingDir })
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+
+	stage := func(name, version string, withManifest bool, age time.Duration) string {
+		dir := filepath.Join(root, unsafeName.ReplaceAllString(name+"-"+version, "_"))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "x.dmg"), []byte("1234567890"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if withManifest {
+			writeManifest(dir, Action{Name: name, Available: version, URL: "https://example.org/x.dmg"})
+		}
+		if err := os.Chtimes(dir, now.Add(-age), now.Add(-age)); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	installed := stage("Done", "2.0", true, time.Hour)
+	pending := stage("Pending", "1.5", true, time.Hour)
+	superseded := stage("Moved", "1.0", true, time.Hour)
+	gone := stage("Gone", "1.0", true, time.Hour)
+	unknown := stage("Unknown", "1.0", true, time.Hour)
+	current := stage("Current", "3.0", true, time.Hour)
+	oldStray := stage("Stray", "0.1", false, 31*24*time.Hour)
+	newStray := stage("Fresh", "0.1", false, time.Hour)
+	if err := os.WriteFile(filepath.Join(root, "loose.dmg"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	after := inventory.Result{Entries: []inventory.Entry{
+		{Name: "Done", Installed: "2.0", Status: "CURRENT"},
+		{Name: "Pending", Installed: "1.0", Available: "1.5", Status: "OUTDATED"},
+		{Name: "Moved", Installed: "0.9", Available: "1.1", Status: "OUTDATED"},
+		{Name: "Unknown", Installed: "0.9", Status: "UNKNOWN"}, // probe failed: no verdict, keep
+		{Name: "Current", Installed: "3.1", Status: "CURRENT"},
+	}}
+	removed, freed := CleanStaging(after, now)
+	want := []string{
+		"Current 3.0 (now installed)",
+		"Done 2.0 (now installed)",
+		"Gone 1.0 (app no longer found)",
+		"Moved 1.0 (superseded by 1.1)",
+		unsafeName.ReplaceAllString("Stray-0.1", "_") + " (no record of what it was for, older than 30 days)",
+	}
+	if strings.Join(removed, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("removed:\n%s\nwant:\n%s", strings.Join(removed, "\n"), strings.Join(want, "\n"))
+	}
+	// Five 10-byte payloads plus four small manifests.
+	if freed < 50 || freed > 50+4*200 {
+		t.Fatalf("freed %d bytes, want 50 plus manifests", freed)
+	}
+	for _, dir := range []string{installed, superseded, gone, current, oldStray} {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Fatalf("%s should be gone: %v", dir, err)
+		}
+	}
+	for _, dir := range []string{pending, unknown, newStray, filepath.Join(root, "loose.dmg")} {
+		if _, err := os.Stat(dir); err != nil {
+			t.Fatalf("%s should remain: %v", dir, err)
+		}
 	}
 }

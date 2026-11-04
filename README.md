@@ -272,7 +272,8 @@ showed; Homebrew actions are batched into one upgrade per kind. Afterwards
 it rescans and prints a summary that separates *updated* from *downloaded
 and verified but not yet installed*, lists anything newly outdated, and
 lists Homebrew packages that changed as dependencies, such as a new Python
-or OpenSSL. `--no-rescan` skips that step.
+or OpenSSL. The rescan also retires staged Sparkle downloads that can no
+longer be used (see below). `--no-rescan` skips both.
 
 | Route | What runs | Who does the install |
 |---|---|---|
@@ -295,9 +296,22 @@ checked against the appcast, and its **EdDSA signature is verified with the appl
 `SUPublicEDKey`** before the file is written. An enclosure without a signature,
 or an app without a public key, is skipped unless `--allow-unverified` is
 given, and is then labelled `UNVERIFIED`. Downloads carry a quarantine flag so
-Gatekeeper treats them like any other download. `--fetch-only` stops after
-staging. Every executed or failed action is appended to
+Gatekeeper treats them like any other download. An enclosure already staged by
+an earlier run is reused when it still passes the same size and signature
+checks, so running `update` again before you install does not fetch it twice;
+one that no longer passes is discarded and fetched afresh. `--fetch-only`
+stops after staging. Every executed or failed action is appended to
 `~/Library/Caches/macup/update.log`.
+
+A staged download is kept exactly as long as it could still be reused. Each
+staging directory records which app and version it is for, and the rescan
+after `--yes` or `--fetch-only` removes a directory once that version is
+installed (or the app reports `CURRENT`), once the feed has moved on to a
+newer version, or once the app is no longer found. An app with no verdict
+this run, because its feed failed, keeps its download. A directory with no
+record of what it was for, left by an older macup, goes after 30 days. The
+summary lists what was removed and how much space it freed. Nothing is
+removed on a plan-only run.
 
 An app that is not installed through Homebrew, when exactly one cask ships
 an app with its filename, gets a `brew-adopt` route. A match made by tie-break

@@ -229,7 +229,11 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
-		update.Summarise(outcomes, after, brewBefore, update.BrewVersions(context.Background())).Print(os.Stdout)
+		summary := update.Summarise(outcomes, after, brewBefore, update.BrewVersions(context.Background()))
+		if cleaned, freed := update.CleanStaging(after, time.Now()); len(cleaned) > 0 {
+			summary.Cleaned = append(cleaned, fmt.Sprintf("(%.1f MB freed from %s)", float64(freed)/1e6, update.StagingDir()))
+		}
+		summary.Print(os.Stdout)
 		if failed > 0 {
 			return 1
 		}

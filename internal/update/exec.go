@@ -188,8 +188,13 @@ func StagingDir() string {
 	return filepath.Join(dir, "macup", "downloads")
 }
 
+// stagingDir is what fetchSparkle actually consults; tests point it elsewhere.
+var stagingDir = StagingDir
+
 // fetchSparkle downloads the enclosure, verifies its EdDSA signature with the
-// application's own public key, and opens it unless fetching only. It never
+// application's own public key, and opens it unless fetching only. An
+// enclosure staged by an earlier run is reused when it still passes the same
+// checks, so re-running update does not fetch the same bytes again. It never
 // replaces the application bundle: Sparkle's installer, or the user via
 // Finder, does that.
 func fetchSparkle(ctx context.Context, a Action, opts Options) (string, error) {
@@ -203,40 +208,49 @@ func fetchSparkle(ctx context.Context, a Action, opts Options) (string, error) {
 	}
 	// One directory per download: opening a zip makes Archive Utility expand
 	// the .app beside it, and that belongs with its archive, not in the root.
-	dir := filepath.Join(StagingDir(), unsafeName.ReplaceAllString(a.Name+"-"+a.Available, "_"))
+	dir := filepath.Join(stagingDir(), unsafeName.ReplaceAllString(a.Name+"-"+a.Available, "_"))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "failed", err
 	}
-	fmt.Fprintf(opts.Out, "fetch  %s: %s\n", a.Name, a.URL)
-	data, finalURL, disposition, err := download(ctx, a.URL, maxEnclosure)
+	dest, data, err := stagedEnclosure(dir, a)
 	if err != nil {
 		return "failed", err
 	}
-	dest := filepath.Join(dir, stagedName(a, finalURL, disposition, data))
-	if a.Length > 0 && int64(len(data)) != a.Length {
-		return "failed", fmt.Errorf("size %d does not match appcast length %d", len(data), a.Length)
-	}
-	verified := false
-	if a.Signature != "" && a.PublicKey != "" {
-		if err := verifyEdDSA(data, a.Signature, a.PublicKey); err != nil {
-			hint := ""
-			if !namesApp(path.Base(u.Path), a.Name) {
-				// A feed that now serves a differently named product has usually
-				// been renamed and re-keyed by the vendor; the installed app's key
-				// cannot verify it and Sparkle itself would refuse too.
-				hint = fmt.Sprintf("; the enclosure %q does not name %q, so the vendor may have renamed or re-keyed the product", path.Base(u.Path), a.Name)
-			}
-			return "failed", fmt.Errorf("EdDSA verification failed: %w (download discarded)%s", err, hint)
+	if dest != "" {
+		fmt.Fprintf(opts.Out, "reuse  %s: %s\n", a.Name, dest)
+	} else {
+		fmt.Fprintf(opts.Out, "fetch  %s: %s\n", a.Name, a.URL)
+		var finalURL, disposition string
+		data, finalURL, disposition, err = download(ctx, a.URL, maxEnclosure)
+		if err != nil {
+			return "failed", err
 		}
-		verified = true
+		dest = filepath.Join(dir, stagedName(a, finalURL, disposition, data))
+		if a.Length > 0 && int64(len(data)) != a.Length {
+			return "failed", fmt.Errorf("size %d does not match appcast length %d", len(data), a.Length)
+		}
+		if a.Signature != "" && a.PublicKey != "" {
+			if err := verifyEdDSA(data, a.Signature, a.PublicKey); err != nil {
+				hint := ""
+				if !namesApp(path.Base(u.Path), a.Name) {
+					// A feed that now serves a differently named product has usually
+					// been renamed and re-keyed by the vendor; the installed app's key
+					// cannot verify it and Sparkle itself would refuse too.
+					hint = fmt.Sprintf("; the enclosure %q does not name %q, so the vendor may have renamed or re-keyed the product", path.Base(u.Path), a.Name)
+				}
+				return "failed", fmt.Errorf("EdDSA verification failed: %w (download discarded)%s", err, hint)
+			}
+		}
+		if err := os.WriteFile(dest, data, 0o644); err != nil {
+			return "failed", err
+		}
 	}
-	if err := os.WriteFile(dest, data, 0o644); err != nil {
-		return "failed", err
-	}
+	// Record what this is for so CleanStaging can retire it once installed.
+	writeManifest(dir, a)
 	// Mark the file as downloaded so Gatekeeper treats it like any other download.
 	_ = exec.CommandContext(ctx, "/usr/bin/xattr", "-w", "com.apple.quarantine", "0083;00000000;macup;", dest).Run()
 	status := "verified"
-	if !verified {
+	if a.Signature == "" || a.PublicKey == "" {
 		status = "UNVERIFIED"
 	}
 	fmt.Fprintf(opts.Out, "staged %s: %s (%s, %d bytes)\n", a.Name, dest, status, len(data))
@@ -248,6 +262,42 @@ func fetchSparkle(ctx context.Context, a Action, opts Options) (string, error) {
 		return "staged", err
 	}
 	return "opened", nil
+}
+
+// stagedEnclosure looks for an enclosure an earlier run left in dir and
+// checks it as a fresh download is checked: size against the appcast, EdDSA
+// signature against the app's key. The directory is keyed by app and version,
+// so any installer-looking file in it is a candidate. One that no longer
+// passes is removed so the fetch replaces it rather than leaving a stale
+// file beside the new one.
+func stagedEnclosure(dir string, a Action) (string, []byte, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", nil, err
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !e.Type().IsRegular() || !(installerExt(name) || strings.HasSuffix(name, ".bin")) {
+			continue
+		}
+		p := filepath.Join(dir, name)
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		if a.Length > 0 && int64(len(data)) != a.Length {
+			_ = os.Remove(p)
+			continue
+		}
+		if a.Signature != "" && a.PublicKey != "" {
+			if err := verifyEdDSA(data, a.Signature, a.PublicKey); err != nil {
+				_ = os.Remove(p)
+				continue
+			}
+		}
+		return p, data, nil
+	}
+	return "", nil, nil
 }
 
 // stagedName picks a filename for the enclosure. Vendors often publish the

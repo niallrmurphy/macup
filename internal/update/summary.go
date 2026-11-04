@@ -20,6 +20,7 @@ type Summary struct {
 	Failed       []string
 	NewlyOut     []string // outdated now, not in the plan (metadata moved)
 	Dependencies []string // Homebrew packages that changed without being planned
+	Cleaned      []string // staged downloads removed because they are installed, superseded or orphaned
 }
 
 func Summarise(outcomes []Outcome, after inventory.Result, brewBefore, brewAfter map[string]string) Summary {
@@ -105,6 +106,7 @@ func (s Summary) Print(w io.Writer) {
 	section("Also changed by Homebrew as dependencies", s.Dependencies)
 	section("Skipped (no automated route, or route not enabled)", s.Skipped)
 	section("Failed", s.Failed)
+	section("Removed staged downloads that are no longer needed", s.Cleaned)
 	if len(s.Updated)+len(s.Staged)+len(s.StillOut)+len(s.Failed)+len(s.Skipped) == 0 {
 		fmt.Fprintln(w, "Nothing to do.")
 	}
