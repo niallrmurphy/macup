@@ -120,7 +120,7 @@ func run(args []string) int {
 		debugFlag := fs.Bool("sparkle-debug", false, "print Sparkle per-feed diagnostics to stderr (implies --sparkle)")
 		debugXMLDir := fs.String("sparkle-debug-xml", "", "directory for sanitized appcast XML structure samples (implies --sparkle-debug)")
 		appStoreFlag := fs.Bool("appstore", false, "scan Mac App Store software via mas")
-		providersFlag := fs.String("providers", "all", "update-check providers: all, none, microsoft, sparkle, adobe, lookup (comma-separated)")
+		providersFlag := fs.String("providers", "all", "update-check providers: all, none, microsoft, sparkle, adobe, apple, lookup (comma-separated)")
 		offlineFlag := fs.Bool("offline", false, "nothing leaves the machine: local inventory and Homebrew's local state only; no providers, no App Store query, no cache")
 		rootsFlag := fs.String("roots", "", "comma-separated directories to scan (defaults to standard macOS app directories)")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -155,6 +155,7 @@ func run(args []string) int {
 		yes := fs.Bool("yes", false, "execute the plan; without it only the plan is printed")
 		fetchOnly := fs.Bool("fetch-only", false, "download and verify Sparkle updates into the staging directory, nothing else")
 		allowUnverified := fs.Bool("allow-unverified", false, "download Sparkle enclosures that cannot be signature-verified (not recommended)")
+		appleRestart := fs.Bool("apple-restart", false, "with --yes: also install Apple updates that need a restart, such as macOS (macup never restarts the machine)")
 		adopt := fs.Bool("adopt", false, "with --yes: bring apps that match a Homebrew cask under Homebrew (brew install --cask --force TOKEN); replaces the installed app")
 		only := fs.String("only", "", "comma-separated names (case-insensitive substrings) to limit the plan to")
 		quietFlag := fs.Bool("quiet", false, "suppress scan progress messages on stderr")
@@ -206,7 +207,7 @@ func run(args []string) int {
 			}
 			return 0
 		}
-		opts := update.Options{FetchOnly: *fetchOnly, AllowUnverified: *allowUnverified, Adopt: *adopt, Out: os.Stdout, Err: os.Stderr}
+		opts := update.Options{FetchOnly: *fetchOnly, AllowUnverified: *allowUnverified, Adopt: *adopt, AppleRestart: *appleRestart, Out: os.Stdout, Err: os.Stderr}
 		brewBefore := update.BrewVersions(context.Background())
 		outcomes := update.Execute(context.Background(), plan, opts)
 		failed := 0
@@ -310,6 +311,9 @@ func performScan(cfg scanConfig) (inventory.Result, error) {
 	}
 	useMicrosoft := providerSet["microsoft"] && useApps
 	useAdobe := providerSet["adobe"] && useApps
+	// macOS and Command Line Tools updates are not app bundles, so this
+	// provider runs unless the scan is narrowed to a non-app source.
+	useApple := providerSet["apple"] && (!explicitSource || useApps)
 	useSparkle := providerSet["sparkle"] && useApps
 	useLookup := providerSet["lookup"] && useApps
 
@@ -367,6 +371,14 @@ func performScan(cfg scanConfig) (inventory.Result, error) {
 		result.Microsoft = &m
 		inventory.ApplyMicrosoft(&result)
 		announce("Microsoft: %s", summariseCheck(m.CheckStatus, len(m.Updates), "updates reported"))
+	}
+	if useApple {
+		announce("Apple: running softwareupdate --list (contacts Apple; can take a minute)")
+		// Not cached: `update` rescans afterwards and must see what is still pending.
+		a := inventory.ScanApple(context.Background())
+		result.Apple = &a
+		inventory.ApplyApple(&result)
+		announce("Apple: %s", summariseCheck(a.CheckStatus, len(a.Updates), "updates reported"))
 	}
 	if useAdobe {
 		key := "adobe|" + versionsKey(result.Applications, "com.adobe.")
@@ -715,9 +727,9 @@ func usage() {
 	fmt.Println(`macup — read-only macOS software inventory
 
 Usage:
-  macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle,adobe,lookup] [--offline] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--lookup|--no-lookup] [--cache-ttl 1h] [--fresh] [--quiet] [--verbose] [--all] [--status "NO SOURCE"] [--paths] [--roots /Applications,/Users/me/Applications]
+  macup scan [--json] [--apps] [--include-system] [--brew] [--appstore] [--providers all|none|microsoft,sparkle,adobe,apple,lookup] [--offline] [--sparkle] [--sparkle-debug] [--sparkle-debug-xml DIR] [--lookup|--no-lookup] [--cache-ttl 1h] [--fresh] [--quiet] [--verbose] [--all] [--status "NO SOURCE"] [--paths] [--roots /Applications,/Users/me/Applications]
   macup version
-  macup update [--only NAME,...] [--yes [--adopt] | --fetch-only] [--allow-unverified] [--skip-brew-update] [--no-rescan] [--fresh] [--quiet]
+  macup update [--only NAME,...] [--yes [--adopt] [--apple-restart] | --fetch-only] [--allow-unverified] [--skip-brew-update] [--no-rescan] [--fresh] [--quiet]
   macup probe [--lookup] [--origins] [--fetch] [--model llama3.2:latest] [--max-pages 3] /Applications/Example.app
   macup probe --all [--roots /Applications] [--include-system] [--lookup] [--origins] [--fetch] [--model MODEL] [--workers 2]
   macup doctor [--roots /Applications]
@@ -743,15 +755,16 @@ func parseProviders(raw string) (map[string]bool, error) {
 			p["microsoft"] = true
 			p["sparkle"] = true
 			p["adobe"] = true
+			p["apple"] = true
 			p["lookup"] = true
 		case "none":
 			if len(parts) != 1 {
 				return nil, fmt.Errorf("--providers=none cannot be combined with other providers")
 			}
-		case "microsoft", "sparkle", "adobe", "lookup":
+		case "microsoft", "sparkle", "adobe", "apple", "lookup":
 			p[strings.TrimSpace(part)] = true
 		default:
-			return nil, fmt.Errorf("unknown update provider %q (choose all, none, microsoft, sparkle, adobe, lookup)", part)
+			return nil, fmt.Errorf("unknown update provider %q (choose all, none, microsoft, sparkle, adobe, apple, lookup)", part)
 		}
 	}
 	return p, nil

@@ -141,6 +141,18 @@ func TableWith(w io.Writer, r inventory.Result, opts TableOptions) error {
 			}
 		}
 	}
+	if r.Apple != nil {
+		if r.Apple.CheckStatus == "checked" {
+			if _, err := fmt.Fprintf(w, "provider (apple): checked; %d updates reported by softwareupdate\n", len(r.Apple.Updates)); err != nil {
+				return err
+			}
+		}
+		for _, x := range r.Apple.Warnings {
+			if _, err := fmt.Fprintf(w, "warning (apple): %s\n", x); err != nil {
+				return err
+			}
+		}
+	}
 	if r.Adobe != nil {
 		if r.Adobe.CheckStatus == "checked" {
 			if _, err := fmt.Fprintf(w, "provider (adobe): checked; %d catalogue releases; %d installed package records\n", len(r.Adobe.Products), len(r.Adobe.Installed)); err != nil {

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- New `apple` update provider: `macup scan` runs `softwareupdate --list` and
+  reports pending macOS, Command Line Tools and Safari updates. It is part of
+  `--providers=all`, is skipped by `--offline`, and is not cached.
+- `macup update` gains an `Apple` route (`sudo softwareupdate --install
+  LABEL`, batched into one call). Updates that need a restart run only with
+  `--yes --apple-restart`, and macup never restarts the machine.
+
 ## 1.1.0 (2026-10-29)
 
 - `macup update` gains a `brew-adopt` route for an app installed outside
