@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 (2026-11-04)
 
 - The Sparkle route reuses an enclosure staged by an earlier run when it
   still passes the appcast size and EdDSA checks, so running `update` again
