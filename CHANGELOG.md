@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.1 (2026-11-16)
 
 - The lookup reads the Homebrew cask index's disabled and deprecated flags.
   A disabled cask (Homebrew refuses to install it, usually because the build
