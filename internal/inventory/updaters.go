@@ -61,7 +61,8 @@ type LookupVerdict struct {
 	Comparison string `json:"comparison"`
 	URL        string `json:"url,omitempty"`
 	Note       string `json:"note,omitempty"`
-	Package    string `json:"package,omitempty"` // Homebrew cask token when exactly one cask matched
+	Package    string `json:"package,omitempty"`  // Homebrew cask token when exactly one cask matched
+	Disabled   bool   `json:"disabled,omitempty"` // the catalogue will not install this (disabled Homebrew cask); informational only
 }
 
 // lookupPriority orders sources by how directly they speak for the vendor.
@@ -121,9 +122,17 @@ func ApplyLookups(r *Result, verdicts map[string][]LookupVerdict) {
 		}
 		sort.SliceStable(vs, func(a, b int) bool { return lookupRank(vs[a].Source) < lookupRank(vs[b].Source) })
 		var newer, same, any *LookupVerdict
+		var disabled []string
 		for j := range vs {
 			v := &vs[j]
 			if v.Version == "" {
+				continue
+			}
+			if v.Disabled {
+				// A disabled cask is frozen at whatever version it last
+				// shipped, so it neither flags nor clears the app; it is
+				// worth a word in Detail so nobody reaches for brew.
+				disabled = append(disabled, v.Note)
 				continue
 			}
 			switch v.Comparison {
@@ -168,6 +177,15 @@ func ApplyLookups(r *Result, verdicts map[string][]LookupVerdict) {
 			e.Sources = append(e.Sources, "lookup")
 		case any != nil:
 			e.Detail = "lookup: " + any.Source + " lists " + any.Version + " (" + any.Comparison + ")"
+		}
+		for _, d := range disabled {
+			if d == "" {
+				continue
+			}
+			if e.Detail != "" {
+				e.Detail += "; "
+			}
+			e.Detail += d
 		}
 	}
 }

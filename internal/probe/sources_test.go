@@ -500,3 +500,98 @@ func TestDetectFamiliesNested(t *testing.T) {
 		t.Fatalf("%+v", r.Management)
 	}
 }
+
+func TestSourceForgeProject(t *testing.T) {
+	cases := []struct {
+		raw, slug, dir string
+		ok             bool
+	}{
+		{"https://sourceforge.net/projects/qbittorrent/files/", "qbittorrent", "", true},
+		{"https://sourceforge.net/p/inkscape/wiki", "inkscape", "", true},
+		{"https://downloads.sourceforge.net/qbittorrent/qbittorrent-mac/qbittorrent-5.2.3/qbittorrent-5.2.3.dmg", "qbittorrent", "qbittorrent-mac", true},
+		{"https://downloads.sourceforge.net/project/foo/1.2.3/foo-1.2.3.dmg", "foo", "", true},
+		{"https://downloads.sourceforge.net/project/foo/foo-1.2.3.dmg", "foo", "", true},
+		{"https://audacity.sourceforge.net/", "audacity", "", true},
+		{"https://gimp.sourceforge.io/download", "gimp", "", true},
+		{"https://sourceforge.net/directory/", "", "", false},
+		{"https://sourceforge.net/", "", "", false},
+		{"https://www.sourceforge.net/projects/", "", "", false},
+		{"https://downloads.sourceforge.net/", "", "", false},
+		{"https://lists.sourceforge.net/x", "", "", false},
+		{"http://sourceforge.net/projects/qbittorrent/", "", "", false},
+		{"https://github.com/qbittorrent/qBittorrent", "", "", false},
+	}
+	for _, c := range cases {
+		slug, dir, ok := sourceForgeProject(c.raw)
+		if ok != c.ok || slug != c.slug || dir != c.dir {
+			t.Errorf("%s: got %q %q %v, want %q %q %v", c.raw, slug, dir, ok, c.slug, c.dir, c.ok)
+		}
+	}
+}
+
+func TestSourceForgeFeedsGatedLikeForges(t *testing.T) {
+	r := Report{}
+	add(&r, "https://sourceforge.net/projects/widgetapp/", "executable", 55)
+	add(&r, "https://sourceforge.net/projects/somedep/", "executable", 55)
+	add(&r, "https://otherlib.sourceforge.net/", "binary:libother.dylib", 35)
+	add(&r, "https://sourceforge.net/projects/vendorproj/files/", "Info.plist:VendorURL", 65)
+	for _, c := range append([]Candidate{}, r.Candidates...) {
+		if forgeTrusted(c, []string{"widgetapp"}) {
+			deriveForgeFeeds(&r, c.URL)
+		}
+	}
+	// A cask download URL is a maintained attestation of the slug, so it is
+	// derived without the affinity gate and narrows to the Mac shelf.
+	deriveForgeFeeds(&r, "https://downloads.sourceforge.net/caskproj/caskproj-mac/caskproj-2.0/caskproj-2.0.dmg")
+	urls := map[string]string{}
+	for _, c := range r.Candidates {
+		urls[c.URL] = c.Source
+	}
+	for _, want := range []string{
+		"https://sourceforge.net/projects/widgetapp/rss?path=/",
+		"https://sourceforge.net/projects/vendorproj/rss?path=/",
+		"https://sourceforge.net/projects/caskproj/rss?path=/caskproj-mac",
+	} {
+		if urls[want] != "derived:sourceforge" {
+			t.Errorf("missing %s: %+v", want, r.Candidates)
+		}
+	}
+	for _, bad := range []string{
+		"https://sourceforge.net/projects/somedep/rss?path=/",
+		"https://sourceforge.net/projects/otherlib/rss?path=/",
+	} {
+		if _, found := urls[bad]; found {
+			t.Errorf("untrusted feed derived: %s", bad)
+		}
+	}
+	for _, c := range r.Candidates {
+		if c.Source == "derived:sourceforge" && feedKind(c) != "sourceforge-files" {
+			t.Errorf("derived feed must be parseable: %+v", c)
+		}
+	}
+}
+
+func TestCaskLookupDisabledAndDeprecated(t *testing.T) {
+	raw := []byte(`[
+	 {"token":"qbittorrent","version":"5.2.3","url":"https://downloads.sourceforge.net/qbittorrent/qbittorrent-mac/qbittorrent-5.2.3/qbittorrent-5.2.3.dmg","disabled":true,"disable_date":"2026-09-01","disable_reason":"fails_gatekeeper_check","artifacts":[{"app":["qBittorrent.app"]}]},
+	 {"token":"oldapp","version":"1.0","deprecated":true,"deprecation_reason":"unmaintained","artifacts":[{"app":["OldApp.app"]}]},
+	 {"token":"fine","version":"2.0","artifacts":[{"app":["Fine.app"]}]}
+	]`)
+	idx, err := buildCaskIndex(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, note := idx.match(inventory.Application{BundleID: "org.qbittorrent.qBittorrent", Path: "/Applications/qBittorrent.app"})
+	l := caskLookup(c, note, "5.0.0")
+	if !l.Disabled || l.Package != "" || l.Version != "5.2.3" || l.Comparison != "newer" || !strings.Contains(l.Note, "cask disabled: fails gatekeeper check") {
+		t.Fatalf("disabled cask reports its version but is never a route: %+v", l)
+	}
+	c, note = idx.match(inventory.Application{Path: "/Applications/OldApp.app"})
+	if l = caskLookup(c, note, "1.0"); l.Disabled || l.Package != "oldapp" || !strings.Contains(l.Note, "cask deprecated: unmaintained") {
+		t.Fatalf("deprecated cask still installs, so it keeps its token: %+v", l)
+	}
+	c, note = idx.match(inventory.Application{Path: "/Applications/Fine.app"})
+	if l = caskLookup(c, note, "2.0"); l.Disabled || l.Package != "fine" || strings.Contains(l.Note, "disabled") || strings.Contains(l.Note, "deprecated") {
+		t.Fatalf("%+v", l)
+	}
+}

@@ -70,7 +70,7 @@ func inspectBundle(ctx context.Context, r *Report, fields map[string]string) {
 		if i := strings.Index(proj, "."); i > 0 {
 			proj = proj[:i]
 		}
-		add(r, "https://sourceforge.net/projects/"+proj+"/rss?path=/", "derived:sourceforge", 80)
+		addSourceForgeFeed(r, proj, "")
 	}
 	sortCandidates(r)
 }
@@ -274,6 +274,70 @@ func forgeRepo(raw string) (host, owner, repo string, ok bool) {
 	return host, parts[0], strings.TrimSuffix(parts[1], ".git"), true
 }
 
+// SourceForge hostnames that are not project subdomains.
+var sourceForgeReserved = map[string]bool{"www": true, "downloads": true, "sourceforge": true, "lists": true, "web": true, "users": true, "master": true, "prdownloads": true, "dl": true, "git": true, "svn": true, "hg": true, "apps": true}
+
+// sourceForgeProject returns the project slug named by a SourceForge URL, and
+// for download links the top-level folder the file sits in when that folder
+// looks like a platform shelf (qbittorrent-mac) rather than a release number.
+// Accepted shapes: sourceforge.net/projects/{slug} and /p/{slug}, the
+// downloads.sourceforge.net/{slug} and /project/{slug} mirrors, and project
+// subdomains {slug}.sourceforge.net or .io. Project names on SourceForge are
+// first come first served, so callers must gate the slug against the app's
+// own identity the same way forge repositories are gated.
+func sourceForgeProject(raw string) (slug, dir string, ok bool) {
+	u, err := parseHTTPS(raw)
+	if err != nil {
+		return "", "", false
+	}
+	host := u.Hostname()
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	switch host {
+	case "sourceforge.net", "www.sourceforge.net":
+		if len(parts) < 2 || (parts[0] != "projects" && parts[0] != "p") {
+			return "", "", false
+		}
+		slug = parts[1]
+	case "downloads.sourceforge.net":
+		if len(parts) > 0 && parts[0] == "project" {
+			parts = parts[1:]
+		}
+		if len(parts) < 1 {
+			return "", "", false
+		}
+		slug = parts[0]
+		// Only a folder without digits is a stable shelf; "1.2.3" or
+		// "qbittorrent-5.2.3" would pin the feed to one release for ever.
+		if len(parts) > 2 && !strings.ContainsAny(parts[1], "0123456789") {
+			dir = parts[1]
+		}
+	default:
+		for _, suffix := range []string{".sourceforge.net", ".sourceforge.io"} {
+			if sub, found := strings.CutSuffix(host, suffix); found && sub != "" && !strings.Contains(sub, ".") && !sourceForgeReserved[sub] {
+				slug = sub
+			}
+		}
+	}
+	if slug == "" || !slugPattern.MatchString(slug) {
+		return "", "", false
+	}
+	return strings.ToLower(slug), dir, true
+}
+
+var slugPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// forgeProject names the project a forge URL points at: the repository for
+// GitHub and GitLab, the project slug for SourceForge.
+func forgeProject(raw string) (string, bool) {
+	if _, _, repo, ok := forgeRepo(raw); ok {
+		return repo, true
+	}
+	if slug, _, ok := sourceForgeProject(raw); ok {
+		return slug, true
+	}
+	return "", false
+}
+
 // forgeTrusted limits feed derivation to evidence that names this product's
 // own project. Executables embed URLs of every dependency they link.
 func forgeTrusted(c Candidate, tokens []string) bool {
@@ -282,12 +346,12 @@ func forgeTrusted(c Candidate, tokens []string) bool {
 		// Binaries embed URLs of every dependency they link, including the
 		// vendor's other projects (spotify/save-to-spotify). The repository
 		// name itself must be the product, not merely mention the vendor.
-		_, _, repo, ok := forgeRepo(c.URL)
+		name, ok := forgeProject(c.URL)
 		if !ok {
 			return false
 		}
 		for _, t := range tokens {
-			if strings.Contains(t, squash(repo)) {
+			if strings.Contains(t, squash(name)) {
 				return true
 			}
 		}
@@ -302,6 +366,10 @@ func forgeTrusted(c Candidate, tokens []string) bool {
 
 // deriveForgeFeeds adds canonical release feeds for any forge project named in evidence.
 func deriveForgeFeeds(r *Report, raw string) {
+	if slug, dir, ok := sourceForgeProject(raw); ok {
+		addSourceForgeFeed(r, slug, dir)
+		return
+	}
 	host, owner, repo, ok := forgeRepo(raw)
 	if !ok {
 		return
@@ -312,6 +380,13 @@ func deriveForgeFeeds(r *Report, raw string) {
 	case "gitlab.com":
 		add(r, "https://gitlab.com/"+owner+"/"+repo+"/-/tags?format=atom", "derived:gitlab-tags", 80)
 	}
+}
+
+// addSourceForgeFeed adds the project's files feed. A folder narrows it to
+// one platform's shelf, which matters for projects whose Windows and Linux
+// builds would otherwise crowd the Mac installer out of the feed's window.
+func addSourceForgeFeed(r *Report, slug, dir string) {
+	add(r, "https://sourceforge.net/projects/"+slug+"/rss?path=/"+dir, "derived:sourceforge", 80)
 }
 
 // mozillaUpdateURL expands the AppUpdate template from application.ini.

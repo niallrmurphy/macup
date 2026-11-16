@@ -130,7 +130,14 @@ The `lookup` provider, on by default (`--no-lookup` or
 a possible update source by:
 * asking the App Store catalogue by bundle identifier;
 * the Homebrew cask index by app name; and
-* release feeds derived from evidence in the bundle.
+* release feeds derived from evidence in the bundle: GitHub releases, GitLab
+  tags, and SourceForge project files. A forge URL embedded in a binary only
+  counts when the project is named after the app, since binaries carry the
+  URLs of every library they link; a cask's download or homepage URL is a
+  maintained attestation and is used as is. For SourceForge that also picks
+  the Mac folder (`qbittorrent-mac`) out of the cask's download path, so a
+  project's Windows and Linux files do not crowd the Mac installer out of the
+  feed.
 
 If we get an answer suggesting there is a legitimate update, we label the item
 `OUTDATED` with the relevant source named in `UPDATE SOURCE` and `lookup` added to
@@ -148,6 +155,14 @@ to the App Store; `DETAIL` carries the listing's id. For a cask it is
 Homebrew taking over the install, which `macup update --adopt` can do. Only
 entries no provider evaluated reach the lookup, so a catalogue hit is by
 construction a channel the copy does not use.
+
+A cask Homebrew has disabled (most often because the vendor's build fails
+the Gatekeeper check) is never a channel: `brew install` refuses it and its
+version is frozen at whatever the index last saw. The scan still reads it,
+but only to say so in `DETAIL`, as `cask qbittorrent; cask disabled: fails
+gatekeeper check`; it neither flags the app nor clears it, and it is never
+offered for adoption. A deprecated cask still installs with a warning, so it
+keeps its token and only gains a note.
 
 The Sparkle provider also uses feeds the bundle keeps outside `Info.plist`:
 set in user defaults, or compiled into a binary (VLC and Path Finder, for

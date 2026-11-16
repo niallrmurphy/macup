@@ -54,7 +54,8 @@ type Lookup struct {
 	URL        string `json:"url,omitempty"`
 	Comparison string `json:"comparison"`
 	Note       string `json:"note,omitempty"`
-	Package    string `json:"package,omitempty"` // package-manager token (Homebrew cask) when one cask matched unambiguously
+	Package    string `json:"package,omitempty"`  // package-manager token (Homebrew cask) when one cask matched unambiguously
+	Disabled   bool   `json:"disabled,omitempty"` // the catalogue lists this version but will not install it (disabled Homebrew cask)
 }
 
 // Origin is where macOS recorded the application was downloaded from.

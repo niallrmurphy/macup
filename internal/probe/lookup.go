@@ -247,12 +247,26 @@ func parseITunes(body []byte, installed string) (*Lookup, error) {
 // --- Homebrew cask index: borrowed, not maintained. Cached for a day. ---
 
 type cask struct {
-	Token     string            `json:"token"`
-	Names     []string          `json:"name"`
-	Version   string            `json:"version"`
-	URL       string            `json:"url"`
-	Homepage  string            `json:"homepage"`
-	Artifacts []json.RawMessage `json:"artifacts"`
+	Token             string            `json:"token"`
+	Names             []string          `json:"name"`
+	Version           string            `json:"version"`
+	URL               string            `json:"url"`
+	Homepage          string            `json:"homepage"`
+	Artifacts         []json.RawMessage `json:"artifacts"`
+	Deprecated        bool              `json:"deprecated"`
+	DeprecationReason string            `json:"deprecation_reason"`
+	Disabled          bool              `json:"disabled"`
+	DisableReason     string            `json:"disable_reason"`
+}
+
+// caskReason renders Homebrew's symbolic reasons (fails_gatekeeper_check,
+// unmaintained, discontinued) as words; free-text reasons pass through.
+func caskReason(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "no reason given"
+	}
+	return strings.ReplaceAll(s, "_", " ")
 }
 
 type caskIndex struct {
@@ -377,13 +391,26 @@ func lookupCask(ctx context.Context, app inventory.Application, installed string
 // or a pkg cask matched only because its uninstall stanza quits this bundle
 // id (Elgato Camera Hub quits DisplayLink Manager, which it bundles), is good
 // enough to report a version, not to choose what gets installed.
+//
+// A disabled cask (Homebrew refuses to install it, typically because the
+// vendor's build fails Gatekeeper) still says what version the index last
+// saw, but is never a route: no token, and Disabled tells the scan not to
+// treat it as a channel. A deprecated cask installs with a warning, so it
+// keeps its token and only gains a note.
 func caskLookup(c *cask, note, installed string) *Lookup {
 	version := c.Version
 	if i := strings.Index(version, ","); i > 0 {
 		version = version[:i]
 	}
 	l := &Lookup{Source: "homebrew-cask", URL: c.URL, Note: "cask " + c.Token + note}
-	if note == "" {
+	switch {
+	case c.Disabled:
+		l.Disabled = true
+		l.Note += "; cask disabled: " + caskReason(c.DisableReason)
+	case c.Deprecated:
+		l.Note += "; cask deprecated: " + caskReason(c.DeprecationReason)
+	}
+	if note == "" && !c.Disabled {
 		l.Package = c.Token
 	}
 	if version == "latest" || version == "" {

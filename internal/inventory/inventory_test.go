@@ -177,3 +177,26 @@ func TestApplyLookupsPriority(t *testing.T) {
 		t.Fatalf("helper should be skipped: %+v", e)
 	}
 }
+
+func TestApplyLookupsDisabledCask(t *testing.T) {
+	r := Result{Applications: []Application{{Name: "Q", Path: "/Applications/Q.app"}, {Name: "R", Path: "/Applications/R.app"}, {Name: "S", Path: "/Applications/S.app"}}}
+	Reconcile(&r)
+	disabled := LookupVerdict{Source: "homebrew-cask", Version: "5.2.3", Comparison: "newer", Disabled: true, Note: "cask qbittorrent; cask disabled: fails gatekeeper check"}
+	ApplyLookups(&r, map[string][]LookupVerdict{
+		// A disabled cask outranks a feed, but must not become the channel.
+		identityPath("/Applications/Q.app"): {disabled, {Source: "github-releases", Version: "5.3.0", Comparison: "newer"}},
+		// Alone, it neither flags nor clears the app.
+		identityPath("/Applications/R.app"): {disabled},
+		// Nor does a disabled cask agreeing with the installed version clear it.
+		identityPath("/Applications/S.app"): {{Source: "homebrew-cask", Version: "1.0", Comparison: "same", Disabled: true, Note: "cask s; cask disabled: discontinued"}},
+	})
+	if e := r.Entries[0]; e.Status != "OUTDATED" || e.Available != "5.3.0" || e.UpdateSource != "github-releases" || e.Package != "" || !strings.Contains(e.Detail, "cask disabled: fails gatekeeper check") {
+		t.Fatalf("feed should win over a disabled cask, with the cask noted: %+v", e)
+	}
+	if e := r.Entries[1]; e.Status != "NO SOURCE" || e.Available != "" || e.UpdateSource != "" || e.Detail != "cask qbittorrent; cask disabled: fails gatekeeper check" {
+		t.Fatalf("disabled cask alone is informational: %+v", e)
+	}
+	if e := r.Entries[2]; e.Status != "NO SOURCE" || !strings.Contains(e.Detail, "cask disabled: discontinued") {
+		t.Fatalf("disabled cask must not clear the app: %+v", e)
+	}
+}

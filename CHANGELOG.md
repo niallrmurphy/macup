@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- The lookup reads the Homebrew cask index's disabled and deprecated flags.
+  A disabled cask (Homebrew refuses to install it, usually because the build
+  fails Gatekeeper) is reported in `DETAIL` as `cask TOKEN; cask disabled:
+  REASON` but is no longer a channel: it neither flags nor clears the app,
+  and is never offered for adoption. A deprecated cask keeps working and
+  gains a note.
+- SourceForge release feeds are now derived the same way GitHub and GitLab
+  ones are: from project URLs embedded in the bundle, gated on the project
+  being named after the app, and from a cask's download or homepage URL,
+  which is taken as is. A cask download path that names a platform folder
+  (`qbittorrent-mac`) narrows the feed to that folder, which keeps a
+  project's Windows and Linux files from crowding the Mac installer out of
+  the feed window. Previously only a `net.sourceforge.*` bundle identifier
+  produced a SourceForge feed.
+
 ## 1.2.0 (2026-11-04)
 
 - The Sparkle route reuses an enclosure staged by an earlier run when it
